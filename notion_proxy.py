@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
 
@@ -15,6 +15,15 @@ HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
+@app.route('/')
+def serve_index():
+    return send_from_directory('.', 'index.html')
+
+@app.route('/<path:path>')
+def serve_static(path):
+    if path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):
+        return send_from_directory('.', path)
+    return "Not Found", 404
 
 @app.route("/db", methods=["GET"])
 def query_database():
