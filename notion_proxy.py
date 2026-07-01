@@ -1,12 +1,13 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+import os
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}})
 
-NOTION_TOKEN = "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5"
-DATABASE_ID = "38f18c7fe47080199517c92d4a76093e"
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5")
+DATABASE_ID = os.getenv("DATABASE_ID", "38f18c7fe47080199517c92d4a76093e")
 NOTION_BASE_URL = "https://api.notion.com/v1"
 
 HEADERS = {
@@ -15,26 +16,14 @@ HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
+# 정적 파일 제공
 @app.route('/')
 def serve_index():
-    return send_from_directory('.', 'index.html')
-
-@app.route('/<path:path>')
-def serve_static(path):
-    if path.endswith('.html') or path.endswith('.css') or path.endswith('.js'):
-        return send_from_directory('.', path)
-    return "Not Found", 404
-
-@app.route("/db", methods=["GET"])
-def query_database():
-    """DB 전체 조회"""
-    payload = request.get_json(silent=True) or {}
-    res = requests.post(
-        f"{NOTION_BASE_URL}/databases/{DATABASE_ID}/query",
-        headers=HEADERS,
-        json=payload,
-    )
-    return jsonify(res.json()), res.status_code
+    try:
+        with open(os.path.join(os.path.dirname(__file__), 'index.html'), 'r', encoding='utf-8') as f:
+            return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception as e:
+        return f"Error: {str(e)}", 500
 
 
 @app.route("/db/filter", methods=["POST"])
