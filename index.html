@@ -369,8 +369,12 @@ const API_URL = window.location.origin + '/page';
         throw new Error(err.message || `오류 코드: ${res.status}`);
       }
 
-      showAlert('success', '상담 신청이 완료되었습니다! 1~2 영업일 내에 연락드리겠습니다.');
-      this.reset();
+     showAlert('success', '상담 신청이 완료되었습니다! 1~2 영업일 내에 연락드리겠습니다.');
+this.reset();
+// 1초 후 카톡 채널 열기
+setTimeout(() => {
+    window.open('https://pf.kakao.com/kmo802375', '_blank');
+}, 1000);
     } catch (err) {
       showAlert('error', `전송 실패: ${err.message}`);
     } finally {
