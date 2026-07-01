@@ -3,7 +3,7 @@ from flask_cors import CORS
 import requests
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}})
 
 NOTION_TOKEN = "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5"
 DATABASE_ID = "38f18c7fe47080199517c92d4a76093e"
