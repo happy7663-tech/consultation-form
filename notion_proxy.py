@@ -2,8 +2,10 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import json
+import threading
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
@@ -21,7 +23,26 @@ HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
-# 정적 파일 제공
+KST = timezone(timedelta(hours=9))
+COUNTER_FILE = os.path.join(os.path.dirname(__file__), "visitor_counter.json")
+_counter_lock = threading.Lock()
+
+
+def _load_counter():
+    if os.path.exists(COUNTER_FILE):
+        try:
+            with open(COUNTER_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"total": 0, "today": 0, "date": ""}
+
+
+def _save_counter(data):
+    with open(COUNTER_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+
+
 @app.route('/')
 def serve_index():
     try:
@@ -33,7 +54,6 @@ def serve_index():
 
 @app.route("/db/filter", methods=["POST"])
 def query_database_filtered():
-    """필터 조건으로 DB 조회"""
     payload = request.get_json(silent=True) or {}
     res = requests.post(
         f"{NOTION_BASE_URL}/databases/{DATABASE_ID}/query",
@@ -45,7 +65,6 @@ def query_database_filtered():
 
 @app.route("/page", methods=["POST"])
 def create_page():
-    """DB에 페이지(행) 생성"""
     data = request.get_json(silent=True) or {}
     payload = {
         "parent": {"database_id": DATABASE_ID},
@@ -63,7 +82,6 @@ def create_page():
 
 @app.route("/page/<page_id>", methods=["GET"])
 def get_page(page_id):
-    """페이지 조회"""
     res = requests.get(
         f"{NOTION_BASE_URL}/pages/{page_id}",
         headers=HEADERS,
@@ -73,7 +91,6 @@ def get_page(page_id):
 
 @app.route("/page/<page_id>", methods=["PATCH"])
 def update_page(page_id):
-    """페이지 속성 업데이트"""
     data = request.get_json(silent=True) or {}
     res = requests.patch(
         f"{NOTION_BASE_URL}/pages/{page_id}",
@@ -85,7 +102,6 @@ def update_page(page_id):
 
 @app.route("/page/<page_id>", methods=["DELETE"])
 def archive_page(page_id):
-    """페이지 보관(삭제)"""
     res = requests.patch(
         f"{NOTION_BASE_URL}/pages/{page_id}",
         headers=HEADERS,
@@ -94,9 +110,32 @@ def archive_page(page_id):
     return jsonify(res.json()), res.status_code
 
 
+@app.route("/visit", methods=["POST"])
+def visit_hit():
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
+    with _counter_lock:
+        data = _load_counter()
+        if data.get("date") != today_str:
+            data["date"] = today_str
+            data["today"] = 0
+        data["total"] = data.get("total", 0) + 1
+        data["today"] = data.get("today", 0) + 1
+        _save_counter(data)
+        result = {"total": data["total"], "today": data["today"]}
+    return jsonify(result)
+
+
+@app.route("/visit", methods=["GET"])
+def visit_count():
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
+    with _counter_lock:
+        data = _load_counter()
+        today_count = data.get("today", 0) if data.get("date") == today_str else 0
+    return jsonify({"total": data.get("total", 0), "today": today_count})
+
+
 @app.route("/blog-feed", methods=["GET"])
 def blog_feed():
-    """등록된 네이버 블로그 여러 개의 RSS를 합쳐 최신순으로 반환"""
     limit = request.args.get("limit", default=10, type=int)
     items = []
     for blog_id in NAVER_BLOG_IDS:
@@ -130,7 +169,6 @@ def blog_feed():
 
 @app.route("/proxy/<path:notion_path>", methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"])
 def generic_proxy(notion_path):
-    """Notion API 범용 프록시"""
     if notion_path.startswith("https:/") and not notion_path.startswith("https://"):
         notion_path = "https://" + notion_path[7:]
     elif notion_path.startswith("http:/") and not notion_path.startswith("http://"):
@@ -152,15 +190,4 @@ def generic_proxy(notion_path):
 
 if __name__ == "__main__":
     print("Notion Proxy Server running on http://localhost:5000")
-    print(f"  Database ID: {DATABASE_ID}")
-    print()
-    print("Endpoints:")
-    print("  GET    /db              - DB 전체 조회")
-    print("  POST   /db/filter       - 필터 조회")
-    print("  POST   /page            - 페이지 생성")
-    print("  GET    /page/<id>       - 페이지 조회")
-    print("  PATCH  /page/<id>       - 페이지 수정")
-    print("  DELETE /page/<id>       - 페이지 보관")
-    print("  GET    /blog-feed       - 네이버 블로그 최신글 목록")
-    print("  *      /proxy/<path>    - Notion API 직접 프록시")
     app.run(port=5000, debug=True)
