@@ -2,6 +2,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import os
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}})
@@ -9,6 +12,8 @@ CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH",
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5")
 DATABASE_ID = os.getenv("DATABASE_ID", "38f18c7fe47080199517c92d4a76093e")
 NOTION_BASE_URL = "https://api.notion.com/v1"
+
+NAVER_BLOG_IDS = ["jini5663", "coin9355", "jini7663_"]
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -89,10 +94,43 @@ def archive_page(page_id):
     return jsonify(res.json()), res.status_code
 
 
+@app.route("/blog-feed", methods=["GET"])
+def blog_feed():
+    """등록된 네이버 블로그 여러 개의 RSS를 합쳐 최신순으로 반환"""
+    limit = request.args.get("limit", default=10, type=int)
+    items = []
+    for blog_id in NAVER_BLOG_IDS:
+        try:
+            rss_url = f"https://rss.blog.naver.com/{blog_id}.xml"
+            res = requests.get(rss_url, timeout=5)
+            res.encoding = "utf-8"
+            root = ET.fromstring(res.content)
+            for item in root.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                pub_date = (item.findtext("pubDate") or "").strip()
+                try:
+                    sort_key = parsedate_to_datetime(pub_date).timestamp()
+                except Exception:
+                    sort_key = 0
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "pubDate": pub_date,
+                    "blogId": blog_id,
+                    "_sort": sort_key,
+                })
+        except Exception:
+            continue
+    items.sort(key=lambda x: x["_sort"], reverse=True)
+    for it in items:
+        it.pop("_sort", None)
+    return jsonify(items[:limit])
+
+
 @app.route("/proxy/<path:notion_path>", methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"])
 def generic_proxy(notion_path):
     """Notion API 범용 프록시"""
-    # Flask가 ://의 이중 슬래시를 단일 슬래시로 변환하므로 복원
     if notion_path.startswith("https:/") and not notion_path.startswith("https://"):
         notion_path = "https://" + notion_path[7:]
     elif notion_path.startswith("http:/") and not notion_path.startswith("http://"):
@@ -123,5 +161,6 @@ if __name__ == "__main__":
     print("  GET    /page/<id>       - 페이지 조회")
     print("  PATCH  /page/<id>       - 페이지 수정")
     print("  DELETE /page/<id>       - 페이지 보관")
+    print("  GET    /blog-feed       - 네이버 블로그 최신글 목록")
     print("  *      /proxy/<path>    - Notion API 직접 프록시")
     app.run(port=5000, debug=True)
