@@ -16,7 +16,6 @@
 
     .container { max-width: 680px; margin: 0 auto; }
 
-    /* 헤더 */
     .header {
       text-align: center;
       margin-bottom: 32px;
@@ -48,7 +47,6 @@
       line-height: 1.6;
     }
 
-    /* 카드 */
     .card {
       background: white;
       border-radius: 24px;
@@ -56,7 +54,6 @@
       box-shadow: 0 20px 60px rgba(0,0,0,0.15);
     }
 
-    /* 섹션 */
     .section { margin-bottom: 36px; }
     .section:last-of-type { margin-bottom: 0; }
     .section-title {
@@ -70,7 +67,6 @@
       border-bottom: 2px solid #f0f0f0;
     }
 
-    /* 폼 */
     .form-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -121,13 +117,44 @@
       cursor: pointer;
     }
 
+    .type-pills {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .type-pill {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 14px 8px;
+      border: 2px solid #e8e8e8;
+      border-radius: 12px;
+      background: #fafafa;
+      font-size: 14px;
+      font-weight: 600;
+      color: #555;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .type-pill input { position: absolute; opacity: 0; pointer-events: none; }
+    .type-pill:hover { border-color: #c9b6f5; }
+    .type-pill:has(input:checked) {
+      border-color: #7b2ff7;
+      background: linear-gradient(135deg, #667eea, #7b2ff7);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(123,47,247,0.28);
+    }
+    @media (max-width: 600px) {
+      .type-pills { grid-template-columns: repeat(2, 1fr); }
+    }
+
     textarea {
       resize: vertical;
       min-height: 120px;
       line-height: 1.6;
     }
 
-    /* 개인정보 동의 */
     .privacy-box {
       background: #f8f9ff;
       border: 2px solid #e8eeff;
@@ -168,7 +195,6 @@
       color: #333;
     }
 
-    /* 제출 버튼 */
     .submit-btn {
       width: 100%;
       padding: 18px;
@@ -191,7 +217,6 @@
     .submit-btn:active { transform: translateY(0); }
     .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
-    /* 알림 */
     .alert {
       display: none;
       padding: 16px 20px;
@@ -218,7 +243,6 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* 하단 */
     .footer { text-align: center; margin-top: 24px; font-size: 13px; color: rgba(255,255,255,0.7); }
 
     @media (max-width: 600px) {
@@ -232,20 +256,17 @@
 
 <div class="container">
 
-  <!-- 헤더 -->
   <div class="header">
     <div class="badge">📚 Education Consulting</div>
     <h1>교육 상담 신청</h1>
     <p>전문 상담사가 빠른 시간 내에 연락드립니다.<br>아래 양식을 작성하여 신청해 주세요.</p>
   </div>
 
-  <!-- 폼 카드 -->
   <div class="card">
     <div id="alert" class="alert"></div>
 
     <form id="consultForm" novalidate>
 
-      <!-- 기본 정보 -->
       <div class="section">
         <div class="section-title">01 기본 정보</div>
         <div class="form-row">
@@ -260,17 +281,28 @@
         </div>
       </div>
 
-      <!-- 상담 정보 -->
       <div class="section">
         <div class="section-title">02 상담 정보</div>
         <div class="form-group">
-          <label for="type">상담 종류 <span class="required">*</span></label>
-          <select id="type" required>
-            <option value="">선택해주세요</option>
-            <option value="과외">과외</option>
-            <option value="화상과외">화상과외</option>
-            <option value="와와학원">와와학원</option>
-          </select>
+          <label>상담 종류 <span class="required">*</span></label>
+          <div class="type-pills">
+            <label class="type-pill">
+              <input type="radio" name="type" value="방문과외">
+              <span>방문과외</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="type" value="화상과외">
+              <span>화상과외</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="type" value="와와학원">
+              <span>와와학원</span>
+            </label>
+            <label class="type-pill">
+              <input type="radio" name="type" value="회화수업">
+              <span>회화수업</span>
+            </label>
+          </div>
         </div>
         <div class="form-group">
           <label for="memo">추가 요청사항</label>
@@ -278,7 +310,6 @@
         </div>
       </div>
 
-      <!-- 개인정보 동의 -->
       <div class="privacy-box">
         <h4>개인정보 수집 및 이용 안내</h4>
         <div class="privacy-content">
@@ -308,7 +339,6 @@
 <script>
 const API_URL = window.location.origin + '/page';
 
-  // 전화번호 자동 하이픈
   document.getElementById('phone').addEventListener('input', function () {
     let v = this.value.replace(/\D/g, '');
     if (v.length <= 3)       this.value = v;
@@ -336,7 +366,8 @@ const API_URL = window.location.origin + '/page';
 
     const name    = document.getElementById('name').value.trim();
     const phone   = document.getElementById('phone').value.trim();
-    const type    = document.getElementById('type').value;
+    const typeEl  = document.querySelector('input[name="type"]:checked');
+    const type    = typeEl ? typeEl.value : '';
     const memo    = document.getElementById('memo').value.trim();
     const privacy = document.getElementById('privacy').checked;
 
