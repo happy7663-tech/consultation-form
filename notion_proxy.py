@@ -254,8 +254,10 @@ def write_submit():
     block_ids = []
     if uploaded_image_ids:
         list_res = requests.get(f"{NOTION_BASE_URL}/blocks/{page_id}/children", headers=FILE_HEADERS_JSON)
+        print(f"[DEBUG] blocks GET status={list_res.status_code} body={list_res.text[:500]}")
         if list_res.status_code < 300:
             block_ids = [b["id"] for b in list_res.json().get("results", [])]
+        print(f"[DEBUG] block_ids={block_ids} uploaded_image_ids={uploaded_image_ids}")
 
     # 3단계: 이미지를 정확히 "몇 번째 문단 뒤"인지 지정해서 하나씩 끼워넣는다
     for idx, fid in enumerate(uploaded_image_ids):
@@ -267,11 +269,12 @@ def write_submit():
         else:
             # 문단보다 이미지가 많으면 나머지는 맨 뒤에 순서대로 추가
             insert_payload = {"children": [image_block(fid)]}
-        requests.patch(
+        patch_res = requests.patch(
             f"{NOTION_BASE_URL}/blocks/{page_id}/children",
             headers=FILE_HEADERS_JSON,
             json=insert_payload,
         )
+        print(f"[DEBUG] image insert idx={idx} status={patch_res.status_code} body={patch_res.text[:500]}")
 
     return redirect("/write?success=1")
 
