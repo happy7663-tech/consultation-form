@@ -4,6 +4,7 @@ import requests
 import os
 import json
 import re
+import html
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
@@ -87,6 +88,94 @@ def _upload_image_to_notion(file_storage):
     return file_upload_id
 
 
+def _query_blog_posts(limit=30):
+    """공개된 블로그 글 목록을 최신순으로 가져온다."""
+    payload = {
+        "filter": {"property": "공개", "checkbox": {"equals": True}},
+        "sorts": [{"property": "작성일", "direction": "descending"}],
+        "page_size": limit,
+    }
+    res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
+    if res.status_code >= 300:
+        return []
+    return res.json().get("results", [])
+
+
+def _get_post_by_slug(slug):
+    """슬러그로 공개된 글 하나를 찾는다."""
+    payload = {
+        "filter": {
+            "and": [
+                {"property": "슬러그", "rich_text": {"equals": slug}},
+                {"property": "공개", "checkbox": {"equals": True}},
+            ]
+        },
+    }
+    res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
+    if res.status_code >= 300:
+        return None
+    results = res.json().get("results", [])
+    return results[0] if results else None
+
+
+def _get_page_blocks(page_id):
+    res = requests.get(f"{NOTION_BASE_URL}/blocks/{page_id}/children?page_size=100", headers=HEADERS)
+    if res.status_code >= 300:
+        return []
+    return res.json().get("results", [])
+
+
+def _post_title(post):
+    try:
+        return post["properties"]["제목"]["title"][0]["plain_text"]
+    except (KeyError, IndexError):
+        return "(제목 없음)"
+
+
+def _post_slug(post):
+    try:
+        return post["properties"]["슬러그"]["rich_text"][0]["plain_text"]
+    except (KeyError, IndexError):
+        return post["id"]
+
+
+def _post_date(post):
+    try:
+        return post["properties"]["작성일"]["date"]["start"]
+    except (KeyError, TypeError):
+        return ""
+
+
+def _post_excerpt(blocks, max_len=80):
+    for b in blocks:
+        if b.get("type") == "paragraph":
+            text = "".join(rt.get("plain_text", "") for rt in b["paragraph"].get("rich_text", []))
+            text = text.strip()
+            if text:
+                return text[:max_len] + ("…" if len(text) > max_len else "")
+    return ""
+
+
+def _render_blocks_html(blocks):
+    parts = []
+    for b in blocks:
+        t = b.get("type")
+        if t == "paragraph":
+            text = "".join(rt.get("plain_text", "") for rt in b["paragraph"].get("rich_text", []))
+            if text.strip():
+                parts.append(f"<p>{html.escape(text)}</p>")
+        elif t == "image":
+            img = b.get("image", {})
+            url = None
+            if img.get("type") == "file":
+                url = img.get("file", {}).get("url")
+            elif img.get("type") == "external":
+                url = img.get("external", {}).get("url")
+            if url:
+                parts.append(f'<img src="{html.escape(url)}" alt="" class="post-img" />')
+    return "\n".join(parts)
+
+
 LOGIN_FORM_HTML = """
 <!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8" />
@@ -157,6 +246,94 @@ WRITE_FORM_HTML = """
   </script>
 </body></html>
 """
+
+
+POST_PAGE_STYLE = """
+<style>
+  body{font-family:-apple-system,"Pretendard",sans-serif;background:#EEF3EF;color:#16231F;margin:0;line-height:1.7;}
+  .wrap{max-width:720px;margin:0 auto;padding:40px 20px 80px;}
+  a{color:#1F6F6B;}
+  .top-nav{margin-bottom:28px;font-size:14px;}
+  .top-nav a{text-decoration:none;color:#3D4E48;}
+  h1{font-size:26px;color:#123F3C;margin:0 0 8px;line-height:1.4;}
+  .date{color:#3D4E48;font-size:13px;margin-bottom:28px;}
+  .post-body p{margin:0 0 18px;font-size:16px;}
+  .post-img{width:100%;border-radius:12px;margin:8px 0 24px;display:block;}
+  .cta{margin-top:48px;padding:24px;background:#fff;border-radius:14px;text-align:center;}
+  .cta a{display:inline-block;margin-top:10px;background:#F2B705;color:#123F3C;font-weight:700;padding:12px 22px;border-radius:8px;text-decoration:none;}
+  .list-card{display:block;background:#fff;border-radius:14px;padding:22px;margin-bottom:16px;text-decoration:none;color:inherit;box-shadow:0 6px 20px -12px rgba(18,63,60,.2);}
+  .list-card h2{font-size:18px;margin:0 0 8px;color:#123F3C;}
+  .list-card .date{margin:0;}
+  .list-empty{color:#3D4E48;font-size:14px;}
+</style>
+"""
+
+
+@app.route("/posts", methods=["GET"])
+def posts_list():
+    posts = _query_blog_posts()
+    if not posts:
+        cards_html = '<p class="list-empty">아직 작성된 글이 없습니다.</p>'
+    else:
+        cards = []
+        for p in posts:
+            title = _post_title(p)
+            slug = _post_slug(p)
+            date = _post_date(p)
+            cards.append(
+                f'<a class="list-card" href="/posts/{html.escape(slug)}">'
+                f'<h2>{html.escape(title)}</h2><p class="date">{html.escape(date)}</p></a>'
+            )
+        cards_html = "\n".join(cards)
+
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>블로그 | 톡톡스터디</title>
+<meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
+{POST_PAGE_STYLE}
+</head><body>
+  <div class="wrap">
+    <div class="top-nav"><a href="https://toktokstudy.com/">← 톡톡스터디 홈으로</a></div>
+    <h1>톡톡스터디 블로그</h1>
+    <div class="date">직접 작성한 소식들을 모았습니다.</div>
+    {cards_html}
+  </div>
+</body></html>"""
+
+
+@app.route("/posts/<slug>", methods=["GET"])
+def post_detail(slug):
+    post = _get_post_by_slug(slug)
+    if not post:
+        return "글을 찾을 수 없습니다.", 404
+
+    title = _post_title(post)
+    date = _post_date(post)
+    blocks = _get_page_blocks(post["id"])
+    body_html = _render_blocks_html(blocks)
+    excerpt = _post_excerpt(blocks) or "톡톡스터디 블로그 글입니다."
+
+    return f"""<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{html.escape(title)} | 톡톡스터디 블로그</title>
+<meta name="description" content="{html.escape(excerpt)}" />
+{POST_PAGE_STYLE}
+</head><body>
+  <div class="wrap">
+    <div class="top-nav"><a href="/posts">← 블로그 목록으로</a></div>
+    <h1>{html.escape(title)}</h1>
+    <div class="date">{html.escape(date)}</div>
+    <div class="post-body">
+      {body_html}
+    </div>
+    <div class="cta">
+      <div>방문과외, 화상과외, 와와학원, 회화수업이 궁금하다면?</div>
+      <a href="https://wawa-consultation-form.onrender.com/">상담 신청하기</a>
+    </div>
+  </div>
+</body></html>"""
 
 
 @app.route('/')
