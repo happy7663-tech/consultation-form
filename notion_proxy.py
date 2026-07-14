@@ -1,18 +1,22 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
 import requests
 import os
 import json
+import re
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}})
+app.secret_key = os.getenv("SECRET_KEY", "toktokstudy-write-secret-key-2026")
+CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}}, supports_credentials=True)
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5")
 DATABASE_ID = os.getenv("DATABASE_ID", "38f18c7fe47080199517c92d4a76093e")
+BLOG_DATABASE_ID = os.getenv("BLOG_DATABASE_ID", "")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "coin486")
 NOTION_BASE_URL = "https://api.notion.com/v1"
 
 NAVER_BLOG_IDS = ["jini5663", "coin9355", "jini7663_"]
@@ -43,6 +47,68 @@ def _save_counter(data):
         json.dump(data, f)
 
 
+def _slugify(title):
+    slug = re.sub(r"[^0-9a-zA-Z가-힣]+", "-", title).strip("-")
+    timestamp = datetime.now(KST).strftime("%y%m%d%H%M")
+    return f"{slug}-{timestamp}" if slug else timestamp
+
+
+LOGIN_FORM_HTML = """
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>글쓰기 로그인 - 톡톡스터디</title>
+<style>
+  body{font-family:-apple-system,"Pretendard",sans-serif;background:#EEF3EF;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
+  form{background:#fff;padding:36px 32px;border-radius:14px;box-shadow:0 10px 30px -14px rgba(18,63,60,.28);width:280px;}
+  h1{font-size:18px;margin:0 0 20px;color:#123F3C;}
+  input{width:100%;padding:12px;border:1px solid #CBD9D4;border-radius:8px;box-sizing:border-box;font-size:15px;}
+  button{width:100%;margin-top:14px;padding:12px;border:none;border-radius:8px;background:#F2B705;color:#123F3C;font-weight:700;font-size:15px;cursor:pointer;}
+  .err{color:#EF6F53;font-size:13px;margin-top:10px;}
+</style></head>
+<body>
+  <form method="POST" action="/write/login">
+    <h1>톡톡스터디 블로그 글쓰기</h1>
+    <input type="password" name="password" placeholder="비밀번호" autofocus required />
+    <button type="submit">로그인</button>
+    __ERROR_HTML__
+  </form>
+</body></html>
+"""
+
+WRITE_FORM_HTML = """
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>새 글 작성 - 톡톡스터디</title>
+<style>
+  body{font-family:-apple-system,"Pretendard",sans-serif;background:#EEF3EF;margin:0;padding:40px 20px;}
+  .wrap{max-width:640px;margin:0 auto;background:#fff;padding:32px;border-radius:14px;box-shadow:0 10px 30px -14px rgba(18,63,60,.28);}
+  h1{font-size:20px;color:#123F3C;margin:0 0 24px;}
+  label{display:block;font-size:13.5px;font-weight:700;margin:18px 0 8px;color:#16231F;}
+  input,textarea{width:100%;padding:12px;border:1px solid #CBD9D4;border-radius:8px;box-sizing:border-box;font-size:15px;font-family:inherit;}
+  textarea{min-height:280px;resize:vertical;line-height:1.6;}
+  button{margin-top:22px;padding:12px 22px;border:none;border-radius:8px;background:#F2B705;color:#123F3C;font-weight:700;font-size:15px;cursor:pointer;}
+  .logout{float:right;font-size:13px;color:#3D4E48;}
+  .msg{margin-top:14px;font-size:13.5px;color:#1F6F6B;}
+</style></head>
+<body>
+  <div class="wrap">
+    <a class="logout" href="/write/logout">로그아웃</a>
+    <h1>새 글 작성</h1>
+    <form method="POST" action="/write/submit">
+      <label>제목</label>
+      <input type="text" name="title" required />
+      <label>본문 (문단 구분은 빈 줄로)</label>
+      <textarea name="content" required></textarea>
+      <button type="submit">글 저장하기</button>
+    </form>
+    __MSG_HTML__
+  </div>
+</body></html>
+"""
+
+
 @app.route('/')
 def serve_index():
     try:
@@ -50,6 +116,69 @@ def serve_index():
             return f.read(), 200, {'Content-Type': 'text/html; charset=utf-8'}
     except Exception as e:
         return f"Error: {str(e)}", 500
+
+
+@app.route("/write", methods=["GET"])
+def write_page():
+    if not session.get("is_admin"):
+        return LOGIN_FORM_HTML.replace("__ERROR_HTML__", "")
+    success = request.args.get("success")
+    msg_html = '<p class="msg">글이 저장되었습니다.</p>' if success else ""
+    return WRITE_FORM_HTML.replace("__MSG_HTML__", msg_html)
+
+
+@app.route("/write/login", methods=["POST"])
+def write_login():
+    password = request.form.get("password", "")
+    if password == ADMIN_PASSWORD:
+        session["is_admin"] = True
+        session.permanent = True
+        return redirect("/write")
+    return LOGIN_FORM_HTML.replace("__ERROR_HTML__", '<p class="err">비밀번호가 올바르지 않습니다.</p>')
+
+
+@app.route("/write/logout", methods=["GET"])
+def write_logout():
+    session.pop("is_admin", None)
+    return redirect("/write")
+
+
+@app.route("/write/submit", methods=["POST"])
+def write_submit():
+    if not session.get("is_admin"):
+        return redirect("/write")
+    if not BLOG_DATABASE_ID:
+        return "BLOG_DATABASE_ID 환경변수가 설정되지 않았습니다. Render 환경변수 설정을 먼저 완료해주세요.", 500
+
+    title = (request.form.get("title") or "").strip()
+    content = (request.form.get("content") or "").strip()
+    if not title or not content:
+        return "제목과 본문을 모두 입력해주세요.", 400
+
+    slug = _slugify(title)
+    properties = {
+        "제목": {"title": [{"text": {"content": title}}]},
+        "슬러그": {"rich_text": [{"text": {"content": slug}}]},
+        "작성일": {"date": {"start": datetime.now(KST).strftime("%Y-%m-%d")}},
+        "공개": {"checkbox": True},
+    }
+    children = [
+        {
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": p.strip()}}]},
+        }
+        for p in content.split("\n\n") if p.strip()
+    ]
+    payload = {
+        "parent": {"database_id": BLOG_DATABASE_ID},
+        "properties": properties,
+        "children": children,
+    }
+    res = requests.post(f"{NOTION_BASE_URL}/pages", headers=HEADERS, json=payload)
+    if res.status_code >= 300:
+        return jsonify(res.json()), res.status_code
+    return redirect("/write?success=1")
 
 
 @app.route("/db/filter", methods=["POST"])
