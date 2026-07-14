@@ -27,6 +27,18 @@ HEADERS = {
     "Notion-Version": "2022-06-28",
 }
 
+# 이미지 업로드는 최신 Notion API 버전이 필요해서 별도 헤더로 분리
+FILE_API_VERSION = "2026-03-11"
+FILE_HEADERS_JSON = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": FILE_API_VERSION,
+}
+FILE_HEADERS_MULTIPART = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Notion-Version": FILE_API_VERSION,
+}
+
 KST = timezone(timedelta(hours=9))
 COUNTER_FILE = os.path.join(os.path.dirname(__file__), "visitor_counter.json")
 _counter_lock = threading.Lock()
@@ -51,6 +63,28 @@ def _slugify(title):
     slug = re.sub(r"[^0-9a-zA-Z가-힣]+", "-", title).strip("-")
     timestamp = datetime.now(KST).strftime("%y%m%d%H%M")
     return f"{slug}-{timestamp}" if slug else timestamp
+
+
+def _upload_image_to_notion(file_storage):
+    """업로드된 이미지 파일을 Notion File Upload API로 전송하고 file_upload_id를 반환한다."""
+    create_res = requests.post(
+        f"{NOTION_BASE_URL}/file_uploads",
+        headers=FILE_HEADERS_JSON,
+        json={
+            "filename": file_storage.filename or "image.png",
+            "content_type": file_storage.content_type or "image/png",
+        },
+    )
+    create_res.raise_for_status()
+    file_upload_id = create_res.json()["id"]
+
+    send_res = requests.post(
+        f"{NOTION_BASE_URL}/file_uploads/{file_upload_id}/send",
+        headers=FILE_HEADERS_MULTIPART,
+        files={"file": (file_storage.filename, file_storage.stream, file_storage.content_type)},
+    )
+    send_res.raise_for_status()
+    return file_upload_id
 
 
 LOGIN_FORM_HTML = """
@@ -86,25 +120,41 @@ WRITE_FORM_HTML = """
   .wrap{max-width:640px;margin:0 auto;background:#fff;padding:32px;border-radius:14px;box-shadow:0 10px 30px -14px rgba(18,63,60,.28);}
   h1{font-size:20px;color:#123F3C;margin:0 0 24px;}
   label{display:block;font-size:13.5px;font-weight:700;margin:18px 0 8px;color:#16231F;}
+  .hint{font-weight:400;color:#3D4E48;font-size:12.5px;}
   input,textarea{width:100%;padding:12px;border:1px solid #CBD9D4;border-radius:8px;box-sizing:border-box;font-size:15px;font-family:inherit;}
+  input[type=file]{padding:8px;background:#F8FAF9;}
   textarea{min-height:280px;resize:vertical;line-height:1.6;}
   button{margin-top:22px;padding:12px 22px;border:none;border-radius:8px;background:#F2B705;color:#123F3C;font-weight:700;font-size:15px;cursor:pointer;}
   .logout{float:right;font-size:13px;color:#3D4E48;}
   .msg{margin-top:14px;font-size:13.5px;color:#1F6F6B;}
+  .img-row{margin-bottom:8px;}
+  .submitting{opacity:.6;pointer-events:none;}
 </style></head>
 <body>
   <div class="wrap">
     <a class="logout" href="/write/logout">로그아웃</a>
     <h1>새 글 작성</h1>
-    <form method="POST" action="/write/submit">
+    <form method="POST" action="/write/submit" enctype="multipart/form-data" id="writeForm">
       <label>제목</label>
       <input type="text" name="title" required />
-      <label>본문 (문단 구분은 빈 줄로)</label>
+      <label>본문 <span class="hint">(문단 구분은 빈 줄로 — 이미지는 같은 순서의 문단 뒤에 삽입됩니다)</span></label>
       <textarea name="content" required></textarea>
-      <button type="submit">글 저장하기</button>
+      <label>이미지 <span class="hint">(최대 5장, 순서대로 문단 사이에 삽입됩니다 — 안 넣어도 됩니다)</span></label>
+      <div class="img-row"><input type="file" name="image1" accept="image/*" /></div>
+      <div class="img-row"><input type="file" name="image2" accept="image/*" /></div>
+      <div class="img-row"><input type="file" name="image3" accept="image/*" /></div>
+      <div class="img-row"><input type="file" name="image4" accept="image/*" /></div>
+      <div class="img-row"><input type="file" name="image5" accept="image/*" /></div>
+      <button type="submit" id="submitBtn">글 저장하기</button>
     </form>
     __MSG_HTML__
   </div>
+  <script>
+    document.getElementById("writeForm").addEventListener("submit", function(){
+      document.getElementById("submitBtn").textContent = "저장 중... (이미지가 있으면 시간이 좀 걸려요)";
+      document.getElementById("writeForm").classList.add("submitting");
+    });
+  </script>
 </body></html>
 """
 
@@ -155,6 +205,16 @@ def write_submit():
     if not title or not content:
         return "제목과 본문을 모두 입력해주세요.", 400
 
+    # 이미지 최대 5장 업로드 (image1~image5, 빈 칸은 건너뜀)
+    uploaded_image_ids = []
+    for i in range(1, 6):
+        f = request.files.get(f"image{i}")
+        if f and f.filename:
+            try:
+                uploaded_image_ids.append(_upload_image_to_notion(f))
+            except Exception as e:
+                return f"이미지 업로드 중 오류가 발생했습니다 (image{i}): {str(e)}", 500
+
     slug = _slugify(title)
     properties = {
         "제목": {"title": [{"text": {"content": title}}]},
@@ -162,20 +222,40 @@ def write_submit():
         "작성일": {"date": {"start": datetime.now(KST).strftime("%Y-%m-%d")}},
         "공개": {"checkbox": True},
     }
-    children = [
-        {
+
+    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+
+    def paragraph_block(text):
+        return {
             "object": "block",
             "type": "paragraph",
-            "paragraph": {"rich_text": [{"type": "text", "text": {"content": p.strip()}}]},
+            "paragraph": {"rich_text": [{"type": "text", "text": {"content": text}}]},
         }
-        for p in content.split("\n\n") if p.strip()
-    ]
+
+    def image_block(file_upload_id):
+        return {
+            "object": "block",
+            "type": "image",
+            "image": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
+        }
+
+    children = []
+    for idx, p in enumerate(paragraphs):
+        children.append(paragraph_block(p))
+        if idx < len(uploaded_image_ids):
+            children.append(image_block(uploaded_image_ids[idx]))
+    # 이미지가 문단 수보다 많으면 나머지는 맨 뒤에 순서대로 추가
+    if len(uploaded_image_ids) > len(paragraphs):
+        for fid in uploaded_image_ids[len(paragraphs):]:
+            children.append(image_block(fid))
+
     payload = {
         "parent": {"database_id": BLOG_DATABASE_ID},
         "properties": properties,
         "children": children,
     }
-    res = requests.post(f"{NOTION_BASE_URL}/pages", headers=HEADERS, json=payload)
+    # 이미지(file_upload) 블록은 최신 API 버전이 필요하므로 FILE_HEADERS_JSON 사용
+    res = requests.post(f"{NOTION_BASE_URL}/pages", headers=FILE_HEADERS_JSON, json=payload)
     if res.status_code >= 300:
         return jsonify(res.json()), res.status_code
     return redirect("/write?success=1")
