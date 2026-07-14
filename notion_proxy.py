@@ -223,7 +223,7 @@ def write_submit():
         "공개": {"checkbox": True},
     }
 
-    paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+  paragraphs = [p.strip() for p in re.split(r"(?:\r?\n){2,}", content) if p.strip()]
 
     def paragraph_block(text):
         return {
