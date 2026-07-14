@@ -239,25 +239,40 @@ def write_submit():
             "image": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
         }
 
-    children = []
-    for idx, p in enumerate(paragraphs):
-        children.append(paragraph_block(p))
-        if idx < len(uploaded_image_ids):
-            children.append(image_block(uploaded_image_ids[idx]))
-    # 이미지가 문단 수보다 많으면 나머지는 맨 뒤에 순서대로 추가
-    if len(uploaded_image_ids) > len(paragraphs):
-        for fid in uploaded_image_ids[len(paragraphs):]:
-            children.append(image_block(fid))
-
+    # 1단계: 문단(텍스트)만 먼저 페이지에 저장한다
     payload = {
         "parent": {"database_id": BLOG_DATABASE_ID},
         "properties": properties,
-        "children": children,
+        "children": [paragraph_block(p) for p in paragraphs],
     }
-    # 이미지(file_upload) 블록은 최신 API 버전이 필요하므로 FILE_HEADERS_JSON 사용
     res = requests.post(f"{NOTION_BASE_URL}/pages", headers=FILE_HEADERS_JSON, json=payload)
     if res.status_code >= 300:
         return jsonify(res.json()), res.status_code
+    page_id = res.json()["id"]
+
+    # 2단계: 저장된 문단들의 블록 ID를 순서대로 가져온다
+    block_ids = []
+    if uploaded_image_ids:
+        list_res = requests.get(f"{NOTION_BASE_URL}/blocks/{page_id}/children", headers=FILE_HEADERS_JSON)
+        if list_res.status_code < 300:
+            block_ids = [b["id"] for b in list_res.json().get("results", [])]
+
+    # 3단계: 이미지를 정확히 "몇 번째 문단 뒤"인지 지정해서 하나씩 끼워넣는다
+    for idx, fid in enumerate(uploaded_image_ids):
+        if idx < len(block_ids):
+            insert_payload = {
+                "children": [image_block(fid)],
+                "position": {"type": "after_block", "after_block": {"id": block_ids[idx]}},
+            }
+        else:
+            # 문단보다 이미지가 많으면 나머지는 맨 뒤에 순서대로 추가
+            insert_payload = {"children": [image_block(fid)]}
+        requests.patch(
+            f"{NOTION_BASE_URL}/blocks/{page_id}/children",
+            headers=FILE_HEADERS_JSON,
+            json=insert_payload,
+        )
+
     return redirect("/write?success=1")
 
 
