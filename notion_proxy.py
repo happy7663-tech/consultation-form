@@ -270,6 +270,7 @@ POST_PAGE_STYLE = """
 
 
 @app.route("/posts", methods=["GET"])
+@app.route("/posts/list", methods=["GET"])
 def posts_list():
     posts = _query_blog_posts()
     if not posts:
