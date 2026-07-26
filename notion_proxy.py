@@ -156,14 +156,55 @@ def _post_excerpt(blocks, max_len=80):
     return ""
 
 
+_URL_RE = re.compile(r"(https?://[^\s)]+)")
+
+
+def _render_rich_text_html(rich_text_list):
+    """rich_text 배열을 굵게/링크까지 살려서 HTML로 변환한다."""
+    parts = []
+    for rt in rich_text_list:
+        text = rt.get("plain_text", "") or rt.get("text", {}).get("content", "")
+        if not text:
+            continue
+        escaped = html.escape(text)
+        if rt.get("annotations", {}).get("bold"):
+            escaped = f"<strong>{escaped}</strong>"
+        href = rt.get("href") or (rt.get("text", {}) or {}).get("link", {}).get("url")
+        if href:
+            escaped = f'<a href="{html.escape(href)}" target="_blank" rel="noopener">{escaped}</a>'
+        parts.append(escaped)
+    return "".join(parts)
+
+
 def _render_blocks_html(blocks):
     parts = []
-    for b in blocks:
+    i, n = 0, len(blocks)
+    while i < n:
+        b = blocks[i]
         t = b.get("type")
-        if t == "paragraph":
-            text = "".join(rt.get("plain_text", "") for rt in b["paragraph"].get("rich_text", []))
-            if text.strip():
-                parts.append(f"<p>{html.escape(text)}</p>")
+        if t == "bulleted_list_item":
+            items = []
+            while i < n and blocks[i].get("type") == "bulleted_list_item":
+                inner = _render_rich_text_html(blocks[i]["bulleted_list_item"].get("rich_text", []))
+                if inner.strip():
+                    items.append(f"<li>{inner}</li>")
+                i += 1
+            if items:
+                parts.append("<ul>" + "".join(items) + "</ul>")
+            continue
+        elif t == "paragraph":
+            inner = _render_rich_text_html(b["paragraph"].get("rich_text", []))
+            if inner.strip():
+                parts.append(f"<p>{inner}</p>")
+        elif t in ("heading_1", "heading_2", "heading_3"):
+            tag = {"heading_1": "h2", "heading_2": "h3", "heading_3": "h4"}[t]
+            inner = _render_rich_text_html(b[t].get("rich_text", []))
+            if inner.strip():
+                parts.append(f"<{tag}>{inner}</{tag}>")
+        elif t == "quote":
+            inner = _render_rich_text_html(b["quote"].get("rich_text", []))
+            if inner.strip():
+                parts.append(f"<blockquote>{inner}</blockquote>")
         elif t == "image":
             img = b.get("image", {})
             url = None
@@ -173,6 +214,7 @@ def _render_blocks_html(blocks):
                 url = img.get("external", {}).get("url")
             if url:
                 parts.append(f'<img src="{html.escape(url)}" alt="" class="post-img" />')
+        i += 1
     return "\n".join(parts)
 
 
@@ -294,6 +336,13 @@ POST_PAGE_STYLE = """
   h1{font-size:26px;color:#123F3C;margin:0 0 8px;line-height:1.4;}
   .date{color:#3D4E48;font-size:13px;margin-bottom:28px;}
   .post-body p{margin:0 0 18px;font-size:16px;}
+  .post-body h2{font-size:21px;color:#123F3C;margin:32px 0 14px;line-height:1.4;}
+  .post-body h3{font-size:18.5px;color:#123F3C;margin:28px 0 12px;line-height:1.4;}
+  .post-body h4{font-size:16.5px;color:#123F3C;margin:24px 0 10px;line-height:1.4;}
+  .post-body blockquote{margin:0 0 18px;padding:14px 18px;background:#F8FAF9;border-left:3px solid #1F6F6B;border-radius:0 8px 8px 0;color:#3D4E48;}
+  .post-body ul{margin:0 0 18px;padding-left:22px;}
+  .post-body ul li{margin-bottom:6px;font-size:16px;}
+  .post-body a{color:#1F6F6B;text-decoration:underline;word-break:break-all;}
   .post-img{width:100%;border-radius:12px;margin:8px 0 24px;display:block;}
   .cta{margin-top:48px;padding:24px;background:#fff;border-radius:14px;text-align:center;}
   .cta a{display:inline-block;margin-top:10px;background:#F2B705;color:#123F3C;font-weight:700;padding:12px 22px;border-radius:8px;text-decoration:none;}
@@ -408,20 +457,36 @@ def write_logout():
     return redirect("/write")
 
 
+def _split_urls(text):
+    """URL(http/https)이 섞인 텍스트를 (일반글, 링크) 조각으로 나눈다."""
+    parts, last = [], 0
+    for m in _URL_RE.finditer(text):
+        if m.start() > last:
+            parts.append(("text", text[last:m.start()]))
+        parts.append(("link", m.group(1)))
+        last = m.end()
+    if last < len(text):
+        parts.append(("text", text[last:]))
+    return parts or [("text", text)]
+
+
 def _inline_rich_text(text):
-    """**굵게** 표기를 실제 bold 서식으로 변환해 Notion rich_text 배열을 만든다."""
+    """**굵게** 표기를 bold로, URL은 실제 링크로 변환해 Notion rich_text 배열을 만든다."""
     rich = []
     for part in re.split(r"(\*\*[^*]+\*\*)", text):
         if not part:
             continue
-        if part.startswith("**") and part.endswith("**") and len(part) > 4:
-            rich.append({
-                "type": "text",
-                "text": {"content": part[2:-2]},
-                "annotations": {"bold": True, "italic": False, "strikethrough": False, "underline": False, "code": False, "color": "default"},
-            })
-        else:
-            rich.append({"type": "text", "text": {"content": part}})
+        bold = part.startswith("**") and part.endswith("**") and len(part) > 4
+        content = part[2:-2] if bold else part
+        for kind, seg in _split_urls(content):
+            if not seg:
+                continue
+            obj = {"type": "text", "text": {"content": seg}}
+            if kind == "link":
+                obj["text"]["link"] = {"url": seg}
+            if bold or kind == "link":
+                obj["annotations"] = {"bold": bold, "italic": False, "strikethrough": False, "underline": False, "code": False, "color": "default"}
+            rich.append(obj)
     return rich or [{"type": "text", "text": {"content": ""}}]
 
 
