@@ -372,6 +372,84 @@ def write_logout():
     return redirect("/write")
 
 
+_IMAGE_PLACEHOLDER_RE = re.compile(r"^\[\s*이미지\s*([1-5])\s*(?:삽입)?\s*\]$")
+
+
+def _inline_rich_text(text):
+    """**굵게** 표기를 실제 bold 서식으로 변환해 Notion rich_text 배열을 만든다."""
+    rich = []
+    for part in re.split(r"(\*\*[^*]+\*\*)", text):
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) > 4:
+            rich.append({
+                "type": "text",
+                "text": {"content": part[2:-2]},
+                "annotations": {"bold": True, "italic": False, "strikethrough": False, "underline": False, "code": False, "color": "default"},
+            })
+        else:
+            rich.append({"type": "text", "text": {"content": part}})
+    return rich or [{"type": "text", "text": {"content": ""}}]
+
+
+def _line_type(line):
+    """줄 맨 앞 기호를 보고 (블록타입, 기호를 뗀 내용) 을 반환한다."""
+    if line.startswith("### "):
+        return "heading_3", line[4:]
+    if line.startswith("## "):
+        return "heading_2", line[3:]
+    if line.startswith("# "):
+        return "heading_1", line[2:]
+    if line.startswith("> "):
+        return "quote", line[2:]
+    if line.startswith("- ") or line.startswith("* "):
+        return "bulleted_list_item", line[2:]
+    return "paragraph", line
+
+
+def _chunk_to_blocks(chunk):
+    """빈 줄로 구분된 한 덩어리(chunk)를 실제 Notion 블록 목록으로 변환한다."""
+    blocks = []
+    buf_type, buf_lines = None, []
+
+    def flush():
+        if not buf_lines:
+            return
+        if buf_type == "bulleted_list_item":
+            for l in buf_lines:
+                if l.strip():
+                    blocks.append({
+                        "object": "block", "type": "bulleted_list_item",
+                        "bulleted_list_item": {"rich_text": _inline_rich_text(l.strip())},
+                    })
+        else:
+            text = "\n".join(buf_lines).strip()
+            if not text:
+                return
+            btype = buf_type or "paragraph"
+            blocks.append({"object": "block", "type": btype, btype: {"rich_text": _inline_rich_text(text)}})
+
+    for raw_line in chunk.split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        t, text = _line_type(line)
+        if t != buf_type:
+            flush()
+            buf_type, buf_lines = t, []
+        buf_lines.append(text)
+    flush()
+    return blocks
+
+
+def image_block(file_upload_id):
+    return {
+        "object": "block",
+        "type": "image",
+        "image": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
+    }
+
+
 @app.route("/write/submit", methods=["POST"])
 def write_submit():
     if not session.get("is_admin"):
@@ -384,13 +462,13 @@ def write_submit():
     if not title or not content:
         return "제목과 본문을 모두 입력해주세요.", 400
 
-    # 이미지 최대 5장 업로드 (image1~image5, 빈 칸은 건너뜀)
-    uploaded_image_ids = []
+    # 이미지 최대 5장 업로드 (image1~image5, 빈 칸은 건너뜀) — 번호를 그대로 기억해둔다
+    image_id_map = {}
     for i in range(1, 6):
         f = request.files.get(f"image{i}")
         if f and f.filename:
             try:
-                uploaded_image_ids.append(_upload_image_to_notion(f))
+                image_id_map[i] = _upload_image_to_notion(f)
             except Exception as e:
                 return f"이미지 업로드 중 오류가 발생했습니다 (image{i}): {str(e)}", 500
 
@@ -402,58 +480,35 @@ def write_submit():
         "공개": {"checkbox": True},
     }
 
-    paragraphs = [p.strip() for p in re.split(r"(?:\r?\n){2,}", content) if p.strip()]
+    # 본문을 순서대로 훑으며 [이미지N] 표시는 그 자리에 이미지 블록으로,
+    # 나머지는 마크다운을 실제 서식으로 변환해 하나의 children 배열로 만든다
+    chunks = [c.strip() for c in re.split(r"(?:\r?\n){2,}", content) if c.strip()]
+    blocks = []
+    used_numbers = set()
+    for chunk in chunks:
+        m = _IMAGE_PLACEHOLDER_RE.match(chunk)
+        if m:
+            num = int(m.group(1))
+            used_numbers.add(num)
+            fid = image_id_map.get(num)
+            if fid:
+                blocks.append(image_block(fid))
+            continue
+        blocks.extend(_chunk_to_blocks(chunk))
 
-    def paragraph_block(text):
-        return {
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {"rich_text": [{"type": "text", "text": {"content": text}}]},
-        }
+    # [이미지N] 표시 없이 업로드만 된 이미지는 번호 순서대로 맨 뒤에 추가 (기존 방식과의 호환)
+    for num in sorted(image_id_map):
+        if num not in used_numbers:
+            blocks.append(image_block(image_id_map[num]))
 
-    def image_block(file_upload_id):
-        return {
-            "object": "block",
-            "type": "image",
-            "image": {"type": "file_upload", "file_upload": {"id": file_upload_id}},
-        }
-
-    # 1단계: 문단(텍스트)만 먼저 페이지에 저장한다
     payload = {
         "parent": {"database_id": BLOG_DATABASE_ID},
         "properties": properties,
-        "children": [paragraph_block(p) for p in paragraphs],
+        "children": blocks,
     }
     res = requests.post(f"{NOTION_BASE_URL}/pages", headers=FILE_HEADERS_JSON, json=payload)
     if res.status_code >= 300:
         return jsonify(res.json()), res.status_code
-    page_id = res.json()["id"]
-
-    # 2단계: 저장된 문단들의 블록 ID를 순서대로 가져온다
-    block_ids = []
-    if uploaded_image_ids:
-        list_res = requests.get(f"{NOTION_BASE_URL}/blocks/{page_id}/children", headers=FILE_HEADERS_JSON)
-        print(f"[DEBUG] blocks GET status={list_res.status_code} body={list_res.text[:500]}")
-        if list_res.status_code < 300:
-            block_ids = [b["id"] for b in list_res.json().get("results", [])]
-        print(f"[DEBUG] block_ids={block_ids} uploaded_image_ids={uploaded_image_ids}")
-
-    # 3단계: 이미지를 정확히 "몇 번째 문단 뒤"인지 지정해서 하나씩 끼워넣는다
-    for idx, fid in enumerate(uploaded_image_ids):
-        if idx < len(block_ids):
-            insert_payload = {
-                "children": [image_block(fid)],
-                "position": {"type": "after_block", "after_block": {"id": block_ids[idx]}},
-            }
-        else:
-            # 문단보다 이미지가 많으면 나머지는 맨 뒤에 순서대로 추가
-            insert_payload = {"children": [image_block(fid)]}
-        patch_res = requests.patch(
-            f"{NOTION_BASE_URL}/blocks/{page_id}/children",
-            headers=FILE_HEADERS_JSON,
-            json=insert_payload,
-        )
-        print(f"[DEBUG] image insert idx={idx} status={patch_res.status_code} body={patch_res.text[:500]}")
 
     return redirect("/write?success=1")
 
