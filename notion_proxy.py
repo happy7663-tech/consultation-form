@@ -212,28 +212,64 @@ WRITE_FORM_HTML = """
   .hint{font-weight:400;color:#3D4E48;font-size:12.5px;}
   input,textarea{width:100%;padding:12px;border:1px solid #CBD9D4;border-radius:8px;box-sizing:border-box;font-size:15px;font-family:inherit;}
   input[type=file]{padding:8px;background:#F8FAF9;}
-  textarea{min-height:280px;resize:vertical;line-height:1.6;}
+  textarea{min-height:120px;resize:vertical;line-height:1.6;}
   button{margin-top:22px;padding:12px 22px;border:none;border-radius:8px;background:#F2B705;color:#123F3C;font-weight:700;font-size:15px;cursor:pointer;}
   .logout{float:right;font-size:13px;color:#3D4E48;}
   .msg{margin-top:14px;font-size:13.5px;color:#1F6F6B;}
-  .img-row{margin-bottom:8px;}
+  .block{margin-top:22px;padding-top:18px;border-top:1px dashed #CBD9D4;}
+  .block:first-of-type{border-top:none;padding-top:0;}
+  .img-label{font-size:12.5px;color:#3D4E48;font-weight:400;margin:10px 0 6px;}
   .submitting{opacity:.6;pointer-events:none;}
 </style></head>
 <body>
   <div class="wrap">
     <a class="logout" href="/write/logout">로그아웃</a>
     <h1>새 글 작성</h1>
+    <p class="hint">본문을 쓰고, 그 아래 이미지를 선택하면 그 순서 그대로 글에 들어갑니다. 이미지 없이 넘어가도 됩니다.</p>
     <form method="POST" action="/write/submit" enctype="multipart/form-data" id="writeForm">
       <label>제목</label>
       <input type="text" name="title" required />
-      <label>본문 <span class="hint">(문단 구분은 빈 줄로 — 이미지는 같은 순서의 문단 뒤에 삽입됩니다)</span></label>
-      <textarea name="content" required></textarea>
-      <label>이미지 <span class="hint">(최대 5장, 순서대로 문단 사이에 삽입됩니다 — 안 넣어도 됩니다)</span></label>
-      <div class="img-row"><input type="file" name="image1" accept="image/*" /></div>
-      <div class="img-row"><input type="file" name="image2" accept="image/*" /></div>
-      <div class="img-row"><input type="file" name="image3" accept="image/*" /></div>
-      <div class="img-row"><input type="file" name="image4" accept="image/*" /></div>
-      <div class="img-row"><input type="file" name="image5" accept="image/*" /></div>
+
+      <div class="block">
+        <label>본문 1</label>
+        <textarea name="content1"></textarea>
+        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
+        <input type="file" name="image1" accept="image/*" />
+      </div>
+
+      <div class="block">
+        <label>본문 2</label>
+        <textarea name="content2"></textarea>
+        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
+        <input type="file" name="image2" accept="image/*" />
+      </div>
+
+      <div class="block">
+        <label>본문 3</label>
+        <textarea name="content3"></textarea>
+        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
+        <input type="file" name="image3" accept="image/*" />
+      </div>
+
+      <div class="block">
+        <label>본문 4</label>
+        <textarea name="content4"></textarea>
+        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
+        <input type="file" name="image4" accept="image/*" />
+      </div>
+
+      <div class="block">
+        <label>본문 5</label>
+        <textarea name="content5"></textarea>
+        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
+        <input type="file" name="image5" accept="image/*" />
+      </div>
+
+      <div class="block">
+        <label>본문 6 <span class="hint">(마무리 글 — 이미지 없이 끝)</span></label>
+        <textarea name="content6"></textarea>
+      </div>
+
       <button type="submit" id="submitBtn">글 저장하기</button>
     </form>
     __MSG_HTML__
@@ -372,9 +408,6 @@ def write_logout():
     return redirect("/write")
 
 
-_IMAGE_PLACEHOLDER_RE = re.compile(r"^\[\s*이미지\s*([1-5])\s*(?:삽입)?\s*\]$")
-
-
 def _inline_rich_text(text):
     """**굵게** 표기를 실제 bold 서식으로 변환해 Notion rich_text 배열을 만든다."""
     rich = []
@@ -458,17 +491,18 @@ def write_submit():
         return "BLOG_DATABASE_ID 환경변수가 설정되지 않았습니다. Render 환경변수 설정을 먼저 완료해주세요.", 500
 
     title = (request.form.get("title") or "").strip()
-    content = (request.form.get("content") or "").strip()
-    if not title or not content:
-        return "제목과 본문을 모두 입력해주세요.", 400
+    # content1~content6: 화면에 보이는 순서 그대로 이미지 사이사이에 들어가는 본문 조각
+    content_parts = [(request.form.get(f"content{i}") or "").strip() for i in range(1, 7)]
+    if not title or not any(content_parts):
+        return "제목과 본문을 입력해주세요.", 400
 
-    # 이미지 최대 5장 업로드 (image1~image5, 빈 칸은 건너뜀) — 번호를 그대로 기억해둔다
-    image_id_map = {}
+    # 이미지 최대 5장 업로드 (image1~image5, 빈 칸은 건너뜀)
+    image_ids = {}
     for i in range(1, 6):
         f = request.files.get(f"image{i}")
         if f and f.filename:
             try:
-                image_id_map[i] = _upload_image_to_notion(f)
+                image_ids[i] = _upload_image_to_notion(f)
             except Exception as e:
                 return f"이미지 업로드 중 오류가 발생했습니다 (image{i}): {str(e)}", 500
 
@@ -480,26 +514,19 @@ def write_submit():
         "공개": {"checkbox": True},
     }
 
-    # 본문을 순서대로 훑으며 [이미지N] 표시는 그 자리에 이미지 블록으로,
-    # 나머지는 마크다운을 실제 서식으로 변환해 하나의 children 배열로 만든다
-    chunks = [c.strip() for c in re.split(r"(?:\r?\n){2,}", content) if c.strip()]
-    blocks = []
-    used_numbers = set()
-    for chunk in chunks:
-        m = _IMAGE_PLACEHOLDER_RE.match(chunk)
-        if m:
-            num = int(m.group(1))
-            used_numbers.add(num)
-            fid = image_id_map.get(num)
-            if fid:
-                blocks.append(image_block(fid))
-            continue
-        blocks.extend(_chunk_to_blocks(chunk))
+    def _content_to_blocks(text):
+        chunks = [c.strip() for c in re.split(r"(?:\r?\n){2,}", text) if c.strip()]
+        result = []
+        for chunk in chunks:
+            result.extend(_chunk_to_blocks(chunk))
+        return result
 
-    # [이미지N] 표시 없이 업로드만 된 이미지는 번호 순서대로 맨 뒤에 추가 (기존 방식과의 호환)
-    for num in sorted(image_id_map):
-        if num not in used_numbers:
-            blocks.append(image_block(image_id_map[num]))
+    # 본문1 → 이미지1 → 본문2 → 이미지2 → ... → 본문6 순서 그대로 이어붙인다
+    blocks = []
+    for i in range(1, 7):
+        blocks.extend(_content_to_blocks(content_parts[i - 1]))
+        if i <= 5 and i in image_ids:
+            blocks.append(image_block(image_ids[i]))
 
     payload = {
         "parent": {"database_id": BLOG_DATABASE_ID},
