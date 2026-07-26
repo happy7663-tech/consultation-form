@@ -169,7 +169,7 @@ def _render_rich_text_html(rich_text_list):
         escaped = html.escape(text)
         if rt.get("annotations", {}).get("bold"):
             escaped = f"<strong>{escaped}</strong>"
-        href = rt.get("href") or (rt.get("text", {}) or {}).get("link", {}).get("url")
+        href = rt.get("href") or ((rt.get("text") or {}).get("link") or {}).get("url")
         if href:
             escaped = f'<a href="{html.escape(href)}" target="_blank" rel="noopener">{escaped}</a>'
         parts.append(escaped)
