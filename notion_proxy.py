@@ -376,6 +376,7 @@ def posts_list():
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
 <title>블로그 | 톡톡스터디</title>
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
 {POST_PAGE_STYLE}
@@ -404,6 +405,7 @@ def post_detail(slug):
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
 <title>{html.escape(title)} | 톡톡스터디 블로그</title>
 <meta name="description" content="{html.escape(excerpt)}" />
 {POST_PAGE_STYLE}
