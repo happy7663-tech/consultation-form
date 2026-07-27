@@ -425,6 +425,29 @@ def post_detail(slug):
 </body></html>"""
 
 
+@app.route("/sitemap.xml", methods=["GET"])
+def sitemap():
+    base = "https://blog.toktokstudy.com"
+    urlset = ET.Element("urlset", xmlns="http://www.sitemaps.org/schemas/sitemap/0.9")
+
+    def add_url(loc, lastmod=None):
+        url_el = ET.SubElement(urlset, "url")
+        ET.SubElement(url_el, "loc").text = loc
+        if lastmod:
+            ET.SubElement(url_el, "lastmod").text = lastmod
+
+    add_url(f"{base}/posts")
+
+    posts = _query_blog_posts(limit=100)
+    for post in posts:
+        slug = _post_slug(post)
+        date = _post_date(post)
+        add_url(f"{base}/posts/{slug}", date if date else None)
+
+    xml_str = ET.tostring(urlset, encoding="utf-8", xml_declaration=True)
+    return Response(xml_str, mimetype="application/xml")
+
+
 @app.route('/')
 def serve_index():
     try:
