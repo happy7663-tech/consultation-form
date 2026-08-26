@@ -350,6 +350,12 @@ POST_PAGE_STYLE = """
   .list-card h2{font-size:18px;margin:0 0 8px;color:#123F3C;}
   .list-card .date{margin:0;}
   .list-empty{color:#3D4E48;font-size:14px;}
+  .posts-wrap{max-width:960px;}
+  .list-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .list-grid .list-card{margin-bottom:0;}
+  @media(max-width:680px){
+    .list-grid{grid-template-columns:1fr;}
+  }
 </style>
 """
 
@@ -371,7 +377,7 @@ def posts_list():
                 f'<a class="list-card" href="/posts/{html.escape(slug)}">'
                 f'<h2>{html.escape(title)}</h2><p class="date">{html.escape(date)}</p></a>'
             )
-        cards_html = "\n".join(cards)
+        cards_html = f'<div class="list-grid">\n{"".join(cards)}\n</div>'
 
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8" />
@@ -381,7 +387,7 @@ def posts_list():
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
 {POST_PAGE_STYLE}
 </head><body>
-  <div class="wrap">
+  <div class="wrap posts-wrap">
     <div class="top-nav"><a href="https://toktokstudy.com/">← 톡톡스터디 홈으로</a></div>
     <h1>톡톡스터디 블로그</h1>
     <div class="date">직접 작성한 소식들을 모았습니다.</div>
