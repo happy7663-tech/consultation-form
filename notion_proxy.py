@@ -746,6 +746,7 @@ def blog_feed():
                 })
         except Exception:
             continue
+    TISTORY_KEYWORDS = ["와와학원", "방문", "화상과외", "회화"]
     for blog_id in TISTORY_BLOG_IDS:
         try:
             rss_url = f"https://{blog_id}.tistory.com/rss"
@@ -754,6 +755,8 @@ def blog_feed():
             root = ET.fromstring(res.content)
             for item in root.findall(".//item"):
                 title = (item.findtext("title") or "").strip()
+                if not any(kw in title for kw in TISTORY_KEYWORDS):
+                    continue
                 link = (item.findtext("link") or "").strip()
                 pub_date = (item.findtext("pubDate") or "").strip()
                 try:
