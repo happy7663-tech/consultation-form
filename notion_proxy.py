@@ -21,6 +21,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "coin486")
 NOTION_BASE_URL = "https://api.notion.com/v1"
 
 NAVER_BLOG_IDS = ["jini5663", "coin9355", "jini7663_"]
+TISTORY_BLOG_IDS = ["jini5663"]
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -741,6 +742,29 @@ def blog_feed():
                     "link": link,
                     "pubDate": pub_date,
                     "blogId": blog_id,
+                    "_sort": sort_key,
+                })
+        except Exception:
+            continue
+    for blog_id in TISTORY_BLOG_IDS:
+        try:
+            rss_url = f"https://{blog_id}.tistory.com/rss"
+            res = requests.get(rss_url, timeout=5)
+            res.encoding = "utf-8"
+            root = ET.fromstring(res.content)
+            for item in root.findall(".//item"):
+                title = (item.findtext("title") or "").strip()
+                link = (item.findtext("link") or "").strip()
+                pub_date = (item.findtext("pubDate") or "").strip()
+                try:
+                    sort_key = parsedate_to_datetime(pub_date).timestamp()
+                except Exception:
+                    sort_key = 0
+                items.append({
+                    "title": title,
+                    "link": link,
+                    "pubDate": pub_date,
+                    "blogId": f"{blog_id}(티스토리)",
                     "_sort": sort_key,
                 })
         except Exception:
