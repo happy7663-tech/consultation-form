@@ -42,23 +42,31 @@ FILE_HEADERS_MULTIPART = {
 }
 
 KST = timezone(timedelta(hours=9))
-COUNTER_FILE = os.path.join(os.path.dirname(__file__), "visitor_counter.json")
-_counter_lock = threading.Lock()
+
+# ============================================================
+# 방문자 카운터 - 노션 DB 기반 (Render 재배포에도 값이 유지됨)
+# 예전 방식(visitor_counter.json 로컬 파일)은 재배포 시 초기화되는
+# 문제가 있어서 노션 페이지 2개(total_visits / today_visits)를
+# 대신 사용하도록 교체함.
+# ============================================================
+TOTAL_VISITS_PAGE_ID = "3d918c7f-e470-812c-aa94-ffbd81d316d7"
+TODAY_VISITS_PAGE_ID = "3d918c7f-e470-8101-a46f-ff2c6caa46ac"
 
 
-def _load_counter():
-    if os.path.exists(COUNTER_FILE):
-        try:
-            with open(COUNTER_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"total": 0, "today": 0, "date": ""}
+def _get_visit_page(page_id):
+    res = requests.get(f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS)
+    res.raise_for_status()
+    props = res.json()["properties"]
+    count = props["Count"]["number"] or 0
+    date_obj = props["LastUpdatedDate"]["date"]
+    last_date = date_obj["start"] if date_obj else None
+    return count, last_date
 
 
-def _save_counter(data):
-    with open(COUNTER_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f)
+def _set_visit_page(page_id, count, date_str):
+    body = {"properties": {"Count": {"number": count}, "LastUpdatedDate": {"date": {"start": date_str}}}}
+    res = requests.patch(f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS, json=body)
+    res.raise_for_status()
 
 
 def _slugify(title):
@@ -698,25 +706,30 @@ def archive_page(page_id):
 @app.route("/visit", methods=["POST"])
 def visit_hit():
     today_str = datetime.now(KST).strftime("%Y-%m-%d")
-    with _counter_lock:
-        data = _load_counter()
-        if data.get("date") != today_str:
-            data["date"] = today_str
-            data["today"] = 0
-        data["total"] = data.get("total", 0) + 1
-        data["today"] = data.get("today", 0) + 1
-        _save_counter(data)
-        result = {"total": data["total"], "today": data["today"]}
-    return jsonify(result)
+    try:
+        total, _ = _get_visit_page(TOTAL_VISITS_PAGE_ID)
+        total += 1
+        _set_visit_page(TOTAL_VISITS_PAGE_ID, total, today_str)
+
+        today_count, last_date = _get_visit_page(TODAY_VISITS_PAGE_ID)
+        today_count = today_count + 1 if last_date == today_str else 1
+        _set_visit_page(TODAY_VISITS_PAGE_ID, today_count, today_str)
+
+        return jsonify({"total": total, "today": today_count})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/visit", methods=["GET"])
 def visit_count():
     today_str = datetime.now(KST).strftime("%Y-%m-%d")
-    with _counter_lock:
-        data = _load_counter()
-        today_count = data.get("today", 0) if data.get("date") == today_str else 0
-    return jsonify({"total": data.get("total", 0), "today": today_count})
+    try:
+        total, _ = _get_visit_page(TOTAL_VISITS_PAGE_ID)
+        today_count, last_date = _get_visit_page(TODAY_VISITS_PAGE_ID)
+        today_count = today_count if last_date == today_str else 0
+        return jsonify({"total": total, "today": today_count})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/blog-feed", methods=["GET"])
