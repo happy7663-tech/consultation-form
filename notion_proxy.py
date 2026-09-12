@@ -14,10 +14,10 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "toktokstudy-write-secret-key-2026")
 CORS(app, resources={r"/*": {"origins": "*", "methods": ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]}}, supports_credentials=True)
 
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "ntn_v665215908877AbvamFl83HijgGZlsKc1mqfCpVgEK01M5")
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 DATABASE_ID = os.getenv("DATABASE_ID", "38f18c7fe47080199517c92d4a76093e")
 BLOG_DATABASE_ID = os.getenv("BLOG_DATABASE_ID", "")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "coin486")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
 NOTION_BASE_URL = "https://api.notion.com/v1"
 
 NAVER_BLOG_IDS = ["jini5663", "coin9355", "jini7663_"]
