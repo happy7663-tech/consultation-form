@@ -155,6 +155,24 @@ def _post_date(post):
         return ""
 
 
+def _post_views(post):
+    try:
+        return post["properties"]["조회수"]["number"] or 0
+    except (KeyError, TypeError):
+        return 0
+
+
+def _increment_post_views(page_id, current_views):
+    """조회수를 1 올려서 Notion에 저장. 실패해도 페이지 표시에는 영향 없도록 예외를 삼킨다."""
+    try:
+        new_count = (current_views or 0) + 1
+        body = {"properties": {"조회수": {"number": new_count}}}
+        requests.patch(f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS, json=body, timeout=5)
+        return new_count
+    except Exception:
+        return current_views
+
+
 def _post_excerpt(blocks, max_len=80):
     for b in blocks:
         if b.get("type") == "paragraph":
@@ -382,9 +400,11 @@ def posts_list():
             title = _post_title(p)
             slug = _post_slug(p)
             date = _post_date(p)
+            views = _post_views(p)
             cards.append(
                 f'<a class="list-card" href="/posts/{html.escape(slug)}">'
-                f'<h2>{html.escape(title)}</h2><p class="date">{html.escape(date)}</p></a>'
+                f'<h2>{html.escape(title)}</h2>'
+                f'<p class="date">{html.escape(date)} · 조회 {views}</p></a>'
             )
         cards_html = f'<div class="list-grid">\n{"".join(cards)}\n</div>'
 
@@ -413,6 +433,7 @@ def post_detail(slug):
 
     title = _post_title(post)
     date = _post_date(post)
+    views = _increment_post_views(post["id"], _post_views(post))
     blocks = _get_page_blocks(post["id"])
     body_html = _render_blocks_html(blocks)
     excerpt = _post_excerpt(blocks) or "톡톡스터디 블로그 글입니다."
@@ -428,7 +449,7 @@ def post_detail(slug):
   <div class="wrap">
     <div class="top-nav"><a href="/posts">← 블로그 목록으로</a></div>
     <h1>{html.escape(title)}</h1>
-    <div class="date">{html.escape(date)}</div>
+    <div class="date">{html.escape(date)} · 조회 {views}</div>
     <div class="post-body">
       {body_html}
     </div>
