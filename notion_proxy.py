@@ -184,6 +184,18 @@ def _post_excerpt(blocks, max_len=80):
     return ""
 
 
+def _first_image_url(blocks):
+    """글 본문의 첫 번째 이미지 주소 (없으면 None)."""
+    for b in blocks:
+        if b.get("type") == "image":
+            img = b.get("image", {})
+            if img.get("type") == "file":
+                return img.get("file", {}).get("url")
+            if img.get("type") == "external":
+                return img.get("external", {}).get("url")
+    return None
+
+
 _URL_RE = re.compile(r"(https?://[^\s)]+)")
 
 
@@ -416,6 +428,13 @@ def posts_list():
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <title>블로그 | 톡톡스터디</title>
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
+<link rel="canonical" href="https://blog.toktokstudy.com/posts" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="톡톡스터디" />
+<meta property="og:title" content="톡톡스터디 블로그" />
+<meta property="og:description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
+<meta property="og:url" content="https://blog.toktokstudy.com/posts" />
+<meta property="og:locale" content="ko_KR" />
 {POST_PAGE_STYLE}
 </head><body>
   <div class="wrap posts-wrap">
@@ -439,6 +458,15 @@ def post_detail(slug):
     blocks = _get_page_blocks(post["id"])
     body_html = _render_blocks_html(blocks)
     excerpt = _post_excerpt(blocks) or "톡톡스터디 블로그 글입니다."
+    canonical = f"https://blog.toktokstudy.com/posts/{quote(slug)}"
+    og_image_tags = ""
+    if _first_image_url(blocks):
+        # 노션 이미지 주소는 1시간 뒤 만료되므로, 항상 최신 주소로 연결해주는 고정 주소를 사용
+        og_image = f"{canonical}/og-image"
+        og_image_tags = (
+            f'<meta property="og:image" content="{html.escape(og_image)}" />\n'
+            f'<meta name="twitter:image" content="{html.escape(og_image)}" />\n'
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="ko"><head><meta charset="UTF-8" />
@@ -447,7 +475,17 @@ def post_detail(slug):
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <title>{html.escape(title)} | 톡톡스터디 블로그</title>
 <meta name="description" content="{html.escape(excerpt)}" />
-{POST_PAGE_STYLE}
+<link rel="canonical" href="{html.escape(canonical)}" />
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="톡톡스터디" />
+<meta property="og:title" content="{html.escape(title)}" />
+<meta property="og:description" content="{html.escape(excerpt)}" />
+<meta property="og:url" content="{html.escape(canonical)}" />
+<meta property="og:locale" content="ko_KR" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="{html.escape(title)}" />
+<meta name="twitter:description" content="{html.escape(excerpt)}" />
+{og_image_tags}{POST_PAGE_STYLE}
 </head><body>
   <div class="wrap">
     <div class="top-nav"><a href="/posts">← 블로그 목록으로</a></div>
@@ -462,6 +500,18 @@ def post_detail(slug):
     </div>
   </div>
 </body></html>"""
+
+
+@app.route("/posts/<slug>/og-image", methods=["GET"])
+def post_og_image(slug):
+    """글의 첫 번째 이미지로 연결되는 고정 주소 (카카오톡·검색 미리보기용). 조회수는 올리지 않는다."""
+    post = _get_post_by_slug(slug)
+    if not post:
+        return "이미지를 찾을 수 없습니다.", 404
+    url = _first_image_url(_get_page_blocks(post["id"]))
+    if not url:
+        return "이미지를 찾을 수 없습니다.", 404
+    return redirect(url, code=302)
 
 
 @app.route("/sitemap.xml", methods=["GET"])
