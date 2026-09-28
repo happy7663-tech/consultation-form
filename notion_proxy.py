@@ -8,7 +8,8 @@ import html
 import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, format_datetime
+from urllib.parse import quote
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "toktokstudy-write-secret-key-2026")
@@ -412,6 +413,7 @@ def posts_list():
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
+<link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <title>블로그 | 톡톡스터디</title>
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
 {POST_PAGE_STYLE}
@@ -442,6 +444,7 @@ def post_detail(slug):
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
+<link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <title>{html.escape(title)} | 톡톡스터디 블로그</title>
 <meta name="description" content="{html.escape(excerpt)}" />
 {POST_PAGE_STYLE}
@@ -482,6 +485,90 @@ def sitemap():
 
     xml_str = ET.tostring(urlset, encoding="utf-8", xml_declaration=True)
     return Response(xml_str, mimetype="application/xml")
+
+
+# ============================================================
+# RSS 피드 - 노션 블로그 DB에서 매번 새로 생성
+# 글을 새로 올리면 별도 작업 없이 자동으로 반영된다.
+# (노션 호출을 줄이기 위해 10분간 결과를 메모리에 캐시)
+# ============================================================
+RSS_CACHE = {"xml": None, "time": 0}
+RSS_CACHE_SECONDS = 600
+RSS_ITEM_LIMIT = 30
+
+
+def _post_pubdate(post):
+    """작성일(날짜 또는 날짜+시간)을 RSS용 RFC 822 형식으로 변환."""
+    raw = _post_date(post)
+    if not raw:
+        raw = post.get("created_time", "")
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=KST)
+    except ValueError:
+        dt = datetime.now(KST)
+    return format_datetime(dt)
+
+
+def _build_rss_xml():
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    now = time.time()
+    if RSS_CACHE["xml"] and now - RSS_CACHE["time"] < RSS_CACHE_SECONDS:
+        return RSS_CACHE["xml"]
+
+    base = "https://blog.toktokstudy.com"
+    posts = _query_blog_posts(limit=RSS_ITEM_LIMIT)
+
+    # 각 글의 요약(첫 문단)을 병렬로 가져온다
+    def excerpt_of(post):
+        try:
+            return _post_excerpt(_get_page_blocks(post["id"]), max_len=200)
+        except Exception:
+            return ""
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        excerpts = list(ex.map(excerpt_of, posts))
+
+    rss = ET.Element("rss", version="2.0")
+    rss.set("xmlns:atom", "http://www.w3.org/2005/Atom")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "톡톡스터디 블로그"
+    ET.SubElement(channel, "link").text = f"{base}/posts"
+    ET.SubElement(channel, "description").text = (
+        "톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 학습 정보"
+    )
+    ET.SubElement(channel, "language").text = "ko"
+    ET.SubElement(channel, "lastBuildDate").text = format_datetime(datetime.now(KST))
+    atom_link = ET.SubElement(channel, "atom:link")
+    atom_link.set("href", f"{base}/rss.xml")
+    atom_link.set("rel", "self")
+    atom_link.set("type", "application/rss+xml")
+
+    for post, excerpt in zip(posts, excerpts):
+        title = _post_title(post)
+        url = f"{base}/posts/{quote(_post_slug(post))}"
+        item = ET.SubElement(channel, "item")
+        ET.SubElement(item, "title").text = title
+        ET.SubElement(item, "link").text = url
+        ET.SubElement(item, "guid", isPermaLink="true").text = url
+        ET.SubElement(item, "description").text = excerpt or title
+        ET.SubElement(item, "pubDate").text = _post_pubdate(post)
+
+    xml_bytes = ET.tostring(rss, encoding="utf-8", xml_declaration=True)
+    if posts:  # 노션 조회 실패 시에는 캐시하지 않음
+        RSS_CACHE["xml"] = xml_bytes
+        RSS_CACHE["time"] = now
+    return xml_bytes
+
+
+@app.route("/rss.xml", methods=["GET"])
+@app.route("/rss", methods=["GET"])
+@app.route("/feed", methods=["GET"])
+def rss_feed():
+    return Response(_build_rss_xml(), mimetype="application/rss+xml; charset=utf-8")
 
 
 @app.route('/')
