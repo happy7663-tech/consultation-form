@@ -426,6 +426,7 @@ def posts_list():
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9716996159524167" crossorigin="anonymous"></script>
 <title>블로그 | 톡톡스터디</title>
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
 <link rel="canonical" href="https://blog.toktokstudy.com/posts" />
@@ -473,6 +474,7 @@ def post_detail(slug):
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9716996159524167" crossorigin="anonymous"></script>
 <title>{html.escape(title)} | 톡톡스터디 블로그</title>
 <meta name="description" content="{html.escape(excerpt)}" />
 <link rel="canonical" href="{html.escape(canonical)}" />
