@@ -307,44 +307,49 @@ WRITE_FORM_HTML = """
   <div class="wrap">
     <a class="logout" href="/write/logout">로그아웃</a>
     <h1>새 글 작성</h1>
-    <p class="hint">본문을 쓰고, 그 아래 이미지를 선택하면 그 순서 그대로 글에 들어갑니다. 이미지 없이 넘어가도 됩니다.</p>
+    <p class="hint">이미지 → 본문 순서로 글에 들어갑니다 (이미지1 → 본문1 → … → 이미지5 → 본문5 → 본문6 마무리). 이미지 없이 넘어가도 됩니다.</p>
     <form method="POST" action="/write/submit" enctype="multipart/form-data" id="writeForm">
       <label>제목</label>
       <input type="text" name="title" required />
 
       <div class="block">
+        <label>이미지 1 (메인 이미지) <span class="hint">(선택)</span></label>
+        <input type="file" name="image1" accept="image/*" />
+        <div class="img-label">↓ 이미지 아래에 들어갈 본문</div>
         <label>본문 1</label>
         <textarea name="content1"></textarea>
-        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
-        <input type="file" name="image1" accept="image/*" />
       </div>
 
       <div class="block">
+        <label>이미지 2 <span class="hint">(선택)</span></label>
+        <input type="file" name="image2" accept="image/*" />
+        <div class="img-label">↓ 이미지 아래에 들어갈 본문</div>
         <label>본문 2</label>
         <textarea name="content2"></textarea>
-        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
-        <input type="file" name="image2" accept="image/*" />
       </div>
 
       <div class="block">
+        <label>이미지 3 <span class="hint">(선택)</span></label>
+        <input type="file" name="image3" accept="image/*" />
+        <div class="img-label">↓ 이미지 아래에 들어갈 본문</div>
         <label>본문 3</label>
         <textarea name="content3"></textarea>
-        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
-        <input type="file" name="image3" accept="image/*" />
       </div>
 
       <div class="block">
+        <label>이미지 4 <span class="hint">(선택)</span></label>
+        <input type="file" name="image4" accept="image/*" />
+        <div class="img-label">↓ 이미지 아래에 들어갈 본문</div>
         <label>본문 4</label>
         <textarea name="content4"></textarea>
-        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
-        <input type="file" name="image4" accept="image/*" />
       </div>
 
       <div class="block">
+        <label>이미지 5 <span class="hint">(선택)</span></label>
+        <input type="file" name="image5" accept="image/*" />
+        <div class="img-label">↓ 이미지 아래에 들어갈 본문</div>
         <label>본문 5</label>
         <textarea name="content5"></textarea>
-        <div class="img-label">↓ 이 아래에 넣을 이미지 (선택)</div>
-        <input type="file" name="image5" accept="image/*" />
       </div>
 
       <div class="block">
@@ -756,7 +761,7 @@ def write_submit():
         return "BLOG_DATABASE_ID 환경변수가 설정되지 않았습니다. Render 환경변수 설정을 먼저 완료해주세요.", 500
 
     title = (request.form.get("title") or "").strip()
-    # content1~content6: 화면에 보이는 순서 그대로 이미지 사이사이에 들어가는 본문 조각
+    # content1~content6: 각 이미지 바로 아래에 들어가는 본문 조각 (content6은 마무리)
     content_parts = [(request.form.get(f"content{i}") or "").strip() for i in range(1, 7)]
     if not title or not any(content_parts):
         return "제목과 본문을 입력해주세요.", 400
@@ -786,12 +791,12 @@ def write_submit():
             result.extend(_chunk_to_blocks(chunk))
         return result
 
-    # 본문1 → 이미지1 → 본문2 → 이미지2 → ... → 본문6 순서 그대로 이어붙인다
+    # 이미지1 → 본문1 → 이미지2 → 본문2 → ... → 이미지5 → 본문5 → 본문6(마무리) 순서로 이어붙인다
     blocks = []
     for i in range(1, 7):
-        blocks.extend(_content_to_blocks(content_parts[i - 1]))
         if i <= 5 and i in image_ids:
             blocks.append(image_block(image_ids[i]))
+        blocks.extend(_content_to_blocks(content_parts[i - 1]))
 
     payload = {
         "parent": {"database_id": BLOG_DATABASE_ID},
