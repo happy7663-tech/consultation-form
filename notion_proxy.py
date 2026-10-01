@@ -98,6 +98,9 @@ def _upload_image_to_notion(file_storage):
     return file_upload_id
 
 
+POSTS_PER_PAGE = 12
+
+
 def _query_blog_posts(limit=None):
     """공개된 블로그 글 목록을 최신순으로 가져온다. limit=None이면 전부 가져온다(페이지네이션)."""
     results = []
@@ -413,6 +416,10 @@ POST_PAGE_STYLE = """
   .list-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
   .list-grid .list-card{margin-bottom:0;}
   .list-card h2{font-size:16.5px;line-height:1.5;word-break:keep-all;}
+  .pager{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;margin-top:32px;}
+  .pg-btn{min-width:40px;padding:9px 14px;border-radius:8px;background:#fff;color:#123F3C;text-decoration:none;font-size:14px;font-weight:600;text-align:center;box-shadow:0 4px 14px -10px rgba(18,63,60,.3);}
+  a.pg-btn:hover{background:#1F6F6B;color:#fff;}
+  .pg-cur{background:#123F3C;color:#fff;}
   @media(max-width:900px){
     .list-grid{grid-template-columns:1fr 1fr;}
   }
@@ -427,7 +434,33 @@ POST_PAGE_STYLE = """
 @app.route("/posts/list", methods=["GET"])
 @app.route("/posts/all", methods=["GET"])
 def posts_list():
-    posts = _query_blog_posts()
+    all_posts = _query_blog_posts()
+    total_pages = max(1, -(-len(all_posts) // POSTS_PER_PAGE))
+    try:
+        page = int(request.args.get("page", 1))
+    except (TypeError, ValueError):
+        page = 1
+    page = min(max(page, 1), total_pages)
+    posts = all_posts[(page - 1) * POSTS_PER_PAGE: page * POSTS_PER_PAGE]
+    page_url = "https://blog.toktokstudy.com/posts" + ("" if page == 1 else f"?page={page}")
+    page_title = "블로그 | 톡톡스터디" if page == 1 else f"블로그 {page}페이지 | 톡톡스터디"
+
+    pager_html = ""
+    if total_pages > 1:
+        links = []
+        if page > 1:
+            prev_href = "/posts" if page == 2 else f"/posts?page={page - 1}"
+            links.append(f'<a class="pg-btn" href="{prev_href}" rel="prev">← 이전</a>')
+        for n in range(1, total_pages + 1):
+            href = "/posts" if n == 1 else f"/posts?page={n}"
+            if n == page:
+                links.append(f'<span class="pg-btn pg-cur">{n}</span>')
+            else:
+                links.append(f'<a class="pg-btn" href="{href}">{n}</a>')
+        if page < total_pages:
+            links.append(f'<a class="pg-btn" href="/posts?page={page + 1}" rel="next">다음 →</a>')
+        pager_html = f'<nav class="pager">{"".join(links)}</nav>'
+
     if not posts:
         cards_html = '<p class="list-empty">아직 작성된 글이 없습니다.</p>'
     else:
@@ -450,14 +483,14 @@ def posts_list():
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9716996159524167" crossorigin="anonymous"></script>
-<title>블로그 | 톡톡스터디</title>
+<title>{page_title}</title>
 <meta name="description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
-<link rel="canonical" href="https://blog.toktokstudy.com/posts" />
+<link rel="canonical" href="{page_url}" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="톡톡스터디" />
 <meta property="og:title" content="톡톡스터디 블로그" />
 <meta property="og:description" content="톡톡스터디에서 직접 작성한 방문과외, 화상과외, 와와학원, 회화수업 소식과 이야기를 확인하세요." />
-<meta property="og:url" content="https://blog.toktokstudy.com/posts" />
+<meta property="og:url" content="{page_url}" />
 <meta property="og:locale" content="ko_KR" />
 {POST_PAGE_STYLE}
 </head><body>
@@ -466,6 +499,7 @@ def posts_list():
     <h1>톡톡스터디 블로그</h1>
     <div class="date">직접 작성한 소식들을 모았습니다.</div>
     {cards_html}
+    {pager_html}
   </div>
 </body></html>"""
 
