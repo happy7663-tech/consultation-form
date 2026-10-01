@@ -810,8 +810,18 @@ def write_submit():
     return redirect("/write?success=1")
 
 
+def _admin_only():
+    """관리자(글쓰기 화면 로그인)만 쓸 수 있는 기능을 막는다. 로그인 안 됐으면 403 응답을 돌려준다."""
+    if not session.get("is_admin"):
+        return jsonify({"error": "forbidden"}), 403
+    return None
+
+
 @app.route("/db/filter", methods=["POST"])
 def query_database_filtered():
+    denied = _admin_only()
+    if denied:
+        return denied
     payload = request.get_json(silent=True) or {}
     res = requests.post(
         f"{NOTION_BASE_URL}/databases/{DATABASE_ID}/query",
@@ -840,6 +850,9 @@ def create_page():
 
 @app.route("/page/<page_id>", methods=["GET"])
 def get_page(page_id):
+    denied = _admin_only()
+    if denied:
+        return denied
     res = requests.get(
         f"{NOTION_BASE_URL}/pages/{page_id}",
         headers=HEADERS,
@@ -849,6 +862,9 @@ def get_page(page_id):
 
 @app.route("/page/<page_id>", methods=["PATCH"])
 def update_page(page_id):
+    denied = _admin_only()
+    if denied:
+        return denied
     data = request.get_json(silent=True) or {}
     res = requests.patch(
         f"{NOTION_BASE_URL}/pages/{page_id}",
@@ -860,6 +876,9 @@ def update_page(page_id):
 
 @app.route("/page/<page_id>", methods=["DELETE"])
 def archive_page(page_id):
+    denied = _admin_only()
+    if denied:
+        return denied
     res = requests.patch(
         f"{NOTION_BASE_URL}/pages/{page_id}",
         headers=HEADERS,
@@ -958,15 +977,13 @@ def blog_feed():
 
 @app.route("/proxy/<path:notion_path>", methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"])
 def generic_proxy(notion_path):
-    if notion_path.startswith("https:/") and not notion_path.startswith("https://"):
-        notion_path = "https://" + notion_path[7:]
-    elif notion_path.startswith("http:/") and not notion_path.startswith("http://"):
-        notion_path = "http://" + notion_path[6:]
-
+    denied = _admin_only()
+    if denied:
+        return denied
+    # Notion API 주소로만 보낸다 (외부 주소로 Notion 키가 새어 나가지 않도록)
     if notion_path.startswith("http"):
-        url = notion_path
-    else:
-        url = f"{NOTION_BASE_URL}/{notion_path}"
+        return jsonify({"error": "forbidden"}), 403
+    url = f"{NOTION_BASE_URL}/{notion_path}"
     res = requests.request(
         method=request.method,
         url=url,
