@@ -98,17 +98,30 @@ def _upload_image_to_notion(file_storage):
     return file_upload_id
 
 
-def _query_blog_posts(limit=30):
-    """공개된 블로그 글 목록을 최신순으로 가져온다."""
-    payload = {
-        "filter": {"property": "공개", "checkbox": {"equals": True}},
-        "sorts": [{"property": "작성일", "direction": "descending"}],
-        "page_size": limit,
-    }
-    res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
-    if res.status_code >= 300:
-        return []
-    return res.json().get("results", [])
+def _query_blog_posts(limit=None):
+    """공개된 블로그 글 목록을 최신순으로 가져온다. limit=None이면 전부 가져온다(페이지네이션)."""
+    results = []
+    cursor = None
+    while True:
+        page_size = 100 if limit is None else min(100, limit - len(results))
+        payload = {
+            "filter": {"property": "공개", "checkbox": {"equals": True}},
+            "sorts": [{"property": "작성일", "direction": "descending"}],
+            "page_size": page_size,
+        }
+        if cursor:
+            payload["start_cursor"] = cursor
+        res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
+        if res.status_code >= 300:
+            break
+        data = res.json()
+        results.extend(data.get("results", []))
+        if limit is not None and len(results) >= limit:
+            break
+        if not data.get("has_more") or not data.get("next_cursor"):
+            break
+        cursor = data["next_cursor"]
+    return results if limit is None else results[:limit]
 
 
 def _get_post_by_slug(slug):
@@ -396,9 +409,14 @@ POST_PAGE_STYLE = """
   .list-card .date{margin:0;}
   .list-empty{color:#3D4E48;font-size:14px;}
   .posts-wrap{max-width:960px;}
-  .list-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .posts-wrap{max-width:1080px;}
+  .list-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
   .list-grid .list-card{margin-bottom:0;}
-  @media(max-width:680px){
+  .list-card h2{font-size:16.5px;line-height:1.5;word-break:keep-all;}
+  @media(max-width:900px){
+    .list-grid{grid-template-columns:1fr 1fr;}
+  }
+  @media(max-width:600px){
     .list-grid{grid-template-columns:1fr;}
   }
 </style>
@@ -534,7 +552,7 @@ def sitemap():
 
     add_url(f"{base}/posts")
 
-    posts = _query_blog_posts(limit=100)
+    posts = _query_blog_posts()
     for post in posts:
         slug = _post_slug(post)
         date = _post_date(post)
