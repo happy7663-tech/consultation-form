@@ -589,7 +589,9 @@ def sitemap():
     posts = _query_blog_posts()
     for post in posts:
         slug = _post_slug(post)
-        date = _post_date(post)
+        # 글을 수정하면 구글이 알 수 있도록 노션의 마지막 수정일을 우선 사용
+        edited = (post.get("last_edited_time") or "")[:10]
+        date = edited or _post_date(post)
         add_url(f"{base}/posts/{slug}", date if date else None)
 
     xml_str = ET.tostring(urlset, encoding="utf-8", xml_declaration=True)
