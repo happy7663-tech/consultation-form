@@ -44,6 +44,39 @@ FILE_HEADERS_MULTIPART = {
 
 KST = timezone(timedelta(hours=9))
 
+
+# ============================================================
+# 노션 호출 안정화
+# 노션 API가 가끔 일시적으로 실패(5xx/429/연결 오류)하는데, 그때 블로그가
+# "아직 작성된 글이 없습니다"로 보이는 문제가 있었다.
+# 1) 실패하면 잠깐 쉬었다가 최대 3번까지 다시 시도하고
+# 2) 마지막으로 성공한 결과를 메모리에 보관해 두었다가, 끝내 실패하면 그걸 보여준다.
+# ============================================================
+import time as _time
+
+NOTION_RETRY_STATUSES = {429, 500, 502, 503, 504}
+
+
+def _notion_request(method, url, attempts=3, **kwargs):
+    """노션 API 호출. 일시적인 오류면 재시도한다. 마지막 응답(또는 None)을 돌려준다."""
+    kwargs.setdefault("timeout", 15)
+    res = None
+    for i in range(attempts):
+        try:
+            res = requests.request(method, url, **kwargs)
+            if res.status_code not in NOTION_RETRY_STATUSES:
+                return res
+        except requests.RequestException:
+            res = None
+        if i < attempts - 1:
+            _time.sleep(0.6 * (i + 1))
+    return res
+
+
+BLOG_POSTS_CACHE = {"posts": None, "time": 0}   # 마지막으로 성공한 전체 글 목록
+BLOG_POSTS_FRESH_SECONDS = 60                    # 이 시간 안에는 노션을 다시 부르지 않음
+POST_BLOCKS_CACHE = {}                           # 글 id -> 마지막으로 성공한 본문 블록
+
 # ============================================================
 # 방문자 카운터 - 노션 DB 기반 (Render 재배포에도 값이 유지됨)
 # 예전 방식(visitor_counter.json 로컬 파일)은 재배포 시 초기화되는
@@ -55,7 +88,9 @@ TODAY_VISITS_PAGE_ID = "3d918c7f-e470-8101-a46f-ff2c6caa46ac"
 
 
 def _get_visit_page(page_id):
-    res = requests.get(f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS)
+    res = _notion_request("GET", f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS)
+    if res is None:
+        raise RuntimeError("Notion unreachable")
     res.raise_for_status()
     props = res.json()["properties"]
     count = props["Count"]["number"] or 0
@@ -66,7 +101,9 @@ def _get_visit_page(page_id):
 
 def _set_visit_page(page_id, count, date_str):
     body = {"properties": {"Count": {"number": count}, "LastUpdatedDate": {"date": {"start": date_str}}}}
-    res = requests.patch(f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS, json=body)
+    res = _notion_request("PATCH", f"{NOTION_BASE_URL}/pages/{page_id}", headers=HEADERS, json=body)
+    if res is None:
+        raise RuntimeError("Notion unreachable")
     res.raise_for_status()
 
 
@@ -101,30 +138,49 @@ def _upload_image_to_notion(file_storage):
 POSTS_PER_PAGE = 12
 
 
-def _query_blog_posts(limit=None):
-    """공개된 블로그 글 목록을 최신순으로 가져온다. limit=None이면 전부 가져온다(페이지네이션)."""
+def _fetch_all_blog_posts():
+    """노션에서 공개 글 전체를 최신순으로 가져온다. 실패하면 None."""
     results = []
     cursor = None
     while True:
-        page_size = 100 if limit is None else min(100, limit - len(results))
         payload = {
             "filter": {"property": "공개", "checkbox": {"equals": True}},
             "sorts": [{"property": "작성일", "direction": "descending"}],
-            "page_size": page_size,
+            "page_size": 100,
         }
         if cursor:
             payload["start_cursor"] = cursor
-        res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
-        if res.status_code >= 300:
-            break
+        res = _notion_request("POST", f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
+        if res is None or res.status_code >= 300:
+            return None
         data = res.json()
         results.extend(data.get("results", []))
-        if limit is not None and len(results) >= limit:
-            break
         if not data.get("has_more") or not data.get("next_cursor"):
-            break
+            return results
         cursor = data["next_cursor"]
-    return results if limit is None else results[:limit]
+
+
+def _query_blog_posts(limit=None):
+    """공개된 블로그 글 목록(최신순). 노션이 실패하면 마지막으로 성공한 목록을 쓴다."""
+    now = _time.time()
+    cached = BLOG_POSTS_CACHE["posts"]
+    if cached is not None and now - BLOG_POSTS_CACHE["time"] < BLOG_POSTS_FRESH_SECONDS:
+        posts = cached
+    else:
+        fresh = _fetch_all_blog_posts()
+        if fresh is not None:
+            BLOG_POSTS_CACHE["posts"] = fresh
+            BLOG_POSTS_CACHE["time"] = now
+            posts = fresh
+        else:
+            app.logger.warning("Notion blog query failed; serving cached list (%s posts)", len(cached or []))
+            posts = cached or []
+    return list(posts) if limit is None else posts[:limit]
+
+
+def _blog_posts_unavailable():
+    """노션도 실패하고 보관된 목록도 없는 상태인지."""
+    return BLOG_POSTS_CACHE["posts"] is None
 
 
 def _get_post_by_slug(slug):
@@ -137,18 +193,24 @@ def _get_post_by_slug(slug):
             ]
         },
     }
-    res = requests.post(f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
-    if res.status_code >= 300:
-        return None
-    results = res.json().get("results", [])
-    return results[0] if results else None
+    res = _notion_request("POST", f"{NOTION_BASE_URL}/databases/{BLOG_DATABASE_ID}/query", headers=HEADERS, json=payload)
+    if res is not None and res.status_code < 300:
+        results = res.json().get("results", [])
+        return results[0] if results else None
+    # 노션 실패 시: 보관해 둔 글 목록에서 찾는다
+    for post in _query_blog_posts():
+        if _post_slug(post) == slug:
+            return post
+    return None
 
 
 def _get_page_blocks(page_id):
-    res = requests.get(f"{NOTION_BASE_URL}/blocks/{page_id}/children?page_size=100", headers=HEADERS)
-    if res.status_code >= 300:
-        return []
-    return res.json().get("results", [])
+    res = _notion_request("GET", f"{NOTION_BASE_URL}/blocks/{page_id}/children?page_size=100", headers=HEADERS)
+    if res is None or res.status_code >= 300:
+        return POST_BLOCKS_CACHE.get(page_id, [])
+    blocks = res.json().get("results", [])
+    POST_BLOCKS_CACHE[page_id] = blocks
+    return blocks
 
 
 def _post_title(post):
@@ -435,6 +497,12 @@ POST_PAGE_STYLE = """
 @app.route("/posts/all", methods=["GET"])
 def posts_list():
     all_posts = _query_blog_posts()
+    if not all_posts and _blog_posts_unavailable():
+        return Response(
+            '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><meta http-equiv="refresh" content="5">'
+            '<title>잠시 후 다시 시도해 주세요 | 톡톡스터디</title></head><body style="font-family:sans-serif;padding:40px;text-align:center">'
+            '<p>글 목록을 불러오는 중입니다. 잠시 후 자동으로 다시 시도합니다.</p></body></html>',
+            status=503, headers={"Retry-After": "30"}, mimetype="text/html")
     total_pages = max(1, -(-len(all_posts) // POSTS_PER_PAGE))
     try:
         page = int(request.args.get("page", 1))
@@ -584,9 +652,12 @@ def sitemap():
         if lastmod:
             ET.SubElement(url_el, "lastmod").text = lastmod
 
-    add_url(f"{base}/posts")
-
     posts = _query_blog_posts()
+    if not posts and _blog_posts_unavailable():
+        # 노션 장애로 글을 하나도 못 가져온 경우, 빈 사이트맵을 주지 않고 나중에 다시 오도록 한다
+        return Response("Temporarily unavailable", status=503, headers={"Retry-After": "300"})
+
+    add_url(f"{base}/posts")
     for post in posts:
         slug = _post_slug(post)
         # 글을 수정하면 구글이 알 수 있도록 노션의 마지막 수정일을 우선 사용
@@ -632,6 +703,8 @@ def _build_rss_xml():
 
     base = "https://blog.toktokstudy.com"
     posts = _query_blog_posts(limit=RSS_ITEM_LIMIT)
+    if not posts and RSS_CACHE["xml"]:
+        return RSS_CACHE["xml"]
 
     # 각 글의 요약(첫 문단)을 병렬로 가져온다
     def excerpt_of(post):
