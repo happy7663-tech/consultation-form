@@ -549,6 +549,7 @@ def posts_list():
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
+<meta name="msvalidate.01" content="22727375DDBC7056731F87B932809BD9" />
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9716996159524167" crossorigin="anonymous"></script>
 <title>{page_title}</title>
@@ -598,6 +599,7 @@ def post_detail(slug):
 <html lang="ko"><head><meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="naver-site-verification" content="a205c395081d92de1981faf577652125f32445cd" />
+<meta name="msvalidate.01" content="22727375DDBC7056731F87B932809BD9" />
 <link rel="alternate" type="application/rss+xml" title="톡톡스터디 블로그" href="https://blog.toktokstudy.com/rss.xml" />
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9716996159524167" crossorigin="anonymous"></script>
 <title>{html.escape(title)} | 톡톡스터디 블로그</title>
