@@ -757,6 +757,15 @@ def rss_feed():
     return Response(_build_rss_xml(), mimetype="application/rss+xml; charset=utf-8")
 
 
+# IndexNow(네이버 서치어드바이저·Bing) 소유 확인용 키 파일 — tistory-blog 색인 봇이 사용
+INDEXNOW_KEY = "74bc86b66d8b8e48ef78b38b3590d66c"
+
+
+@app.route(f"/{INDEXNOW_KEY}.txt", methods=["GET"])
+def indexnow_key():
+    return Response(INDEXNOW_KEY, mimetype="text/plain; charset=utf-8")
+
+
 @app.route('/')
 def serve_index():
     try:
